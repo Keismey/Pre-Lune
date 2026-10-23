@@ -1,0 +1,82 @@
+{
+  "game": {
+    "version": "0.1.0"
+  },
+  "world": {
+    "width": 1080,
+    "height": 1920,
+    "top_bar": 130,
+    "bottom_bar": 170,
+    "cols": 20,
+    "rows": 30,
+    "cell": 54
+  },
+  "loop": {
+    "sim_hz": 30,
+    "max_fps": 60,
+    "fps_tolerance_ms": 2,
+    "max_frame_ms": 250
+  },
+  "display": {
+    "dpr_max": 2
+  },
+  "ui": {
+    "min_button_screen_px": 48,
+    "font": "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
+    "colors": {
+      "letterbox": "#1b1330",
+      "text": "#fff8e7",
+      "text_shadow": "rgba(20, 10, 40, 0.45)",
+      "text_dark": "#2a1d4a",
+      "bar": "#3b2a63",
+      "button": "#5b4392",
+      "button_selected": "#ffd166",
+      "grass_a": "#8fcf6b",
+      "grass_b": "#84c462",
+      "grid_line": "rgba(0, 0, 0, 0.08)",
+      "cell_highlight": "rgba(255, 255, 255, 0.5)"
+    },
+    "sizes": {
+      "title_font": 170,
+      "tagline_font": 50,
+      "tap_font": 56,
+      "version_font": 34,
+      "button_font": 58,
+      "wip_font": 40,
+      "shadow_dy": 8,
+      "button_w": 240,
+      "button_h": 140,
+      "button_gap": 40,
+      "button_radius": 30,
+      "back_w": 190,
+      "back_chevron": 26,
+      "back_line": 12,
+      "grid_line_w": 2
+    },
+    "title": {
+      "seed": 20261022,
+      "sky": ["#4b3a94", "#b985d6", "#f2c6e4"],
+      "ground_y": 1000,
+      "ground": "#8fcf6b",
+      "moon": { "x": 800, "y": 330, "r": 120, "color": "#fff3c4" },
+      "title_y": 640,
+      "tagline_y": 800,
+      "tagline_max_w": 860,
+      "tap_y": 1480,
+      "tap_pulse_hz": 0.6,
+      "version_y": 1860,
+      "buttons_y": 1700,
+      "orbit": {
+        "cx": 540,
+        "cy": 1200,
+        "rx": 330,
+        "ry": 130,
+        "speed": 0.9,
+        "path_color": "#e8d3a0",
+        "path_width": 46,
+        "dot_r": 28,
+        "dots": ["#4d8bff", "#ff5a5a", "#ffd33d"]
+      }
+    }
+  }
+}
