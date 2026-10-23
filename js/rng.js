@@ -32,3 +32,17 @@ export function createRng(seed) {
     },
   };
 }
+
+// Un générateur indépendant par flux nommé (carte, apparitions, cadeaux), tous dérivés de la même graine.
+// Les décisions du joueur ne décalent ainsi jamais les tirages des autres flux.
+export function createStreams(seed, names) {
+  const out = {};
+  names.forEach((name, i) => {
+    let h = (seed ^ Math.imul(i + 1, 0x9e3779b9)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
+    out[name] = createRng(h);
+  });
+  return out;
+}

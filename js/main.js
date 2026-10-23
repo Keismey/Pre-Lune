@@ -7,7 +7,7 @@ import { createInput } from "./input.js";
 import { startLoop } from "./loop.js";
 import { createLayout } from "./world.js";
 import { createTitleScreen } from "./screens/title.js";
-import { createGridScreen } from "./screens/grid.js";
+import { createPlayScreen } from "./screens/play.js";
 
 async function loadJson(path) {
   const res = await fetch(path);
@@ -31,6 +31,7 @@ async function boot() {
 
   game.goto = (name) => {
     game.screen = game.screens[name];
+    if (game.screen.enter) game.screen.enter();
   };
   game.setLanguage = (code) => {
     setLang(code);
@@ -38,7 +39,7 @@ async function boot() {
   };
 
   game.screens.title = createTitleScreen(game);
-  game.screens.grid = createGridScreen(game);
+  game.screens.play = createPlayScreen(game);
   game.goto("title");
 
   createInput(canvas, display, (type, x, y) => game.screen.pointer(type, x, y));

@@ -34,6 +34,13 @@ export function createLayout(world) {
       return { c, r };
     },
 
+    // case la plus proche d'un point du monde, ramenée dans la grille si le point est dehors
+    clampCell(x, y) {
+      const c = Math.min(cols - 1, Math.max(0, Math.floor((x - gridX) / cell)));
+      const r = Math.min(rows - 1, Math.max(0, Math.floor((y - gridY) / cell)));
+      return { c, r };
+    },
+
     // rectangle d'une case
     cellRect(c, r) {
       return { x: gridX + c * cell, y: gridY + r * cell, w: cell, h: cell };

@@ -1,6 +1,7 @@
 {
   "game": {
-    "version": "0.1.0"
+    "version": "0.2.0",
+    "start_colors": ["blue"]
   },
   "world": {
     "width": 1080,
@@ -19,6 +20,40 @@
   },
   "display": {
     "dpr_max": 2
+  },
+  "rng": {
+    "streams": ["carte", "apparitions", "cadeaux"]
+  },
+  "palette": {
+    "blue": { "main": "#4d8bff", "dark": "#2f5fc4", "light": "#b9d2ff" }
+  },
+  "tiles": {
+    "start": 40,
+    "cost_per_cell": 1,
+    "refund_ratio": 1.0,
+    "flash_s": 0.5
+  },
+  "buildings": {
+    "size": 2,
+    "start_radius_cells": 1.5,
+    "max_doors": 3,
+    "min_gap": 3,
+    "edge_margin": 2,
+    "pair_min": 6,
+    "pair_max": 20,
+    "house": {
+      "first_spawn_s": 2,
+      "interval_base_s": 6.0,
+      "interval_decay": 0.96,
+      "interval_min_s": 3.5
+    }
+  },
+  "creatures": {
+    "speed_cells_per_s": 2.2
+  },
+  "input": {
+    "tap_max_ms": 200,
+    "cursor_offset_px": 150
   },
   "ui": {
     "min_button_screen_px": 48,
@@ -42,7 +77,7 @@
       "tap_font": 56,
       "version_font": 34,
       "button_font": 58,
-      "wip_font": 40,
+      "toggle_font": 40,
       "shadow_dy": 8,
       "button_w": 240,
       "button_h": 140,
@@ -51,6 +86,8 @@
       "back_w": 190,
       "back_chevron": 26,
       "back_line": 12,
+      "toggle_w": 520,
+      "bar_margin": 40,
       "grid_line_w": 2
     },
     "title": {
@@ -76,6 +113,57 @@
         "path_width": 46,
         "dot_r": 28,
         "dots": ["#4d8bff", "#ff5a5a", "#ffd33d"]
+      }
+    },
+    "play": {
+      "tile_inset": 3,
+      "tile_radius": 10,
+      "bounce_ticks": 8,
+      "bounce_amp": 0.22,
+      "head_ring_w": 6,
+      "start_ring_alpha": 0.45,
+      "building_bump_ticks": 8,
+      "building_bump_amp": 0.12,
+      "creature": {
+        "radius": 20,
+        "outline": 5,
+        "eye_r": 7,
+        "eye_reach": 9,
+        "shadow_dy": 16,
+        "shadow_rx": 20,
+        "shadow_ry": 7,
+        "pop_in_s": 0.2
+      },
+      "popup": {
+        "life_s": 0.9,
+        "rise_px": 80,
+        "font": 56
+      },
+      "cursor": {
+        "r": 30,
+        "w": 8,
+        "dot_r": 12
+      },
+      "hud": {
+        "value_font": 68,
+        "label_font": 28,
+        "icon": 56,
+        "pad": 56,
+        "gap": 20,
+        "value_y": 54,
+        "label_y": 104,
+        "shake_px": 8,
+        "shake_hz": 30
+      },
+      "colors": {
+        "tile": "#ecd9a3",
+        "grout": "#cdb583",
+        "head": "#fff8e7",
+        "cursor": "#fff8e7",
+        "warn": "#ff6b6b",
+        "popup_tile": "#ffe9a8",
+        "popup_delivery": "#fff8e7",
+        "shadow": "rgba(20, 10, 40, 0.25)"
       }
     }
   }

@@ -7,7 +7,7 @@ const VERSION = 1;
 let data = defaults();
 
 function defaults() {
-  return { v: VERSION, settings: { lang: null } };
+  return { v: VERSION, settings: { lang: null, cursor_offset: false } };
 }
 
 function migrate(raw) {

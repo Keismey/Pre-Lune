@@ -197,7 +197,7 @@ export function createTitleScreen(game) {
         const target = pressed;
         pressed = null;
         if (target === "screen") {
-          game.goto("grid");
+          game.goto("play");
         } else if (target && hit(target, x, y)) {
           game.setLanguage(target.code);
         }

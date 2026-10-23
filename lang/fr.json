@@ -5,5 +5,9 @@
   "title.version": "Version {v}",
   "lang.fr": "FR",
   "lang.en": "EN",
-  "game.wip": "Socle V0 : la grille est prête."
+  "hud.tiles": "Dalles",
+  "hud.deliveries": "Livraisons",
+  "opt.offset_on": "Curseur décalé : oui",
+  "opt.offset_off": "Curseur décalé : non",
+  "fx.plus": "+{n}"
 }

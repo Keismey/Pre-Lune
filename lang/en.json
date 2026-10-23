@@ -5,5 +5,9 @@
   "title.version": "Version {v}",
   "lang.fr": "FR",
   "lang.en": "EN",
-  "game.wip": "V0 base: the grid is ready."
+  "hud.tiles": "Tiles",
+  "hud.deliveries": "Deliveries",
+  "opt.offset_on": "Offset cursor: on",
+  "opt.offset_off": "Offset cursor: off",
+  "fx.plus": "+{n}"
 }
