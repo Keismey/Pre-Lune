@@ -10,5 +10,10 @@
   "hud.day": "Day",
   "opt.offset_on": "Offset cursor: on",
   "opt.offset_off": "Offset cursor: off",
-  "fx.plus": "+{n}"
+  "fx.plus": "+{n}",
+  "end.title": "The mist has fallen",
+  "end.deliveries": "Deliveries: {n}",
+  "end.days": "Days survived: {n}",
+  "end.replay": "Play again",
+  "end.back": "Title"
 }

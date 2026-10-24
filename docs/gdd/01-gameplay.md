@@ -21,7 +21,7 @@
 
 - Chaque chaumière fabrique une créature à intervalle régulier. Elle prend le plus court chemin vers un atelier de sa couleur, recalculé quand le réseau change.
 - Pas de dépassement : une créature lente retient celles qui la suivent. Les créatures se serrent et attendent plutôt que de se chevaucher.
-- Si une chaumière n'a aucune route vers un atelier de sa couleur, ou si la route est saturée, ses créatures s'accumulent dans une **file d'attente** visible sur un anneau de 10 pastilles.
+- Chaque chaumière fabrique ses créatures dans sa file d'attente et les fait sortir une à une dès qu'il y a une route et de la place devant sa porte. Si elle n'a aucune route vers un atelier de sa couleur, ou si la route est saturée, sa file grossit : elle est visible sur un anneau de 10 pastilles autour du bâtiment.
 
 ### La défaite : la brume
 
@@ -78,7 +78,10 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 | Écart entre deux créatures | 0,7 case × taille de l'espèce |
 | File d'attente max visible | 10 pastilles |
 | Seuil de panique | 10 créatures en attente ; compteur de 10 s ; arrêt du compteur à 7 ou moins |
-| Déchargement d'un atelier | 1 créature toutes les 0,8 s |
+| Déchargement d'un atelier | 1 créature toutes les 0,8 s. Une créature arrivée à la porte de son atelier attend dans la file de l'atelier (même anneau de 10 pastilles) ; une file d'atelier de 10 déclenche la brume comme une file de chaumière. |
+| Ligne d'arrêt | Une créature s'arrête à 12 px avant un croisement tant qu'elle n'a pas la main ; les suivantes s'arrêtent derrière elle à 0,7 case d'écart. |
+| Blocage en boucle | Si une créature attend un croisement depuis plus de 6 s (circuit fermé de créatures qui s'attendent), elle passe quand même : jamais de blocage définitif. |
+| Créature sans route | Si son tronçon est effacé ou si plus aucune route ne mène à un atelier de sa couleur (1 s), elle retourne dans la file de sa chaumière : rien ne se perd et rien ne se dédouble. |
 | Choix du destinataire | L'atelier de la couleur le plus rapide à atteindre, recalculé à chaque changement de réseau |
 
 ### Croisements et routes spéciales

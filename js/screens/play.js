@@ -1,5 +1,6 @@
-// Écran de partie (V1, partie 1) : chemins libres au doigt, chantiers et bâtiments qui apparaissent, créatures qui
-// livrent, journée de 40 s avec son anneau d'horloge, effacement d'un tap, option de décalage du curseur.
+// Écran de partie (V1, parties 1 et 2) : chemins libres au doigt, chantiers et bâtiments qui apparaissent, créatures qui
+// livrent, files d'attente (anneau de 10 pastilles), brume de panique et fin de partie, journée de 40 s avec son anneau
+// d'horloge, effacement d'un tap, option de décalage du curseur.
 // Formes simples en attendant les images.
 
 import { t } from "../i18n.js";
@@ -26,6 +27,7 @@ export function createPlayScreen(game) {
   let downAt = 0;
   let startedAtDown = false;
   let pressed = null;
+  let mistK = 0; // intensité de la brume affichée (0 à 1), lissée
 
   const bar = layout.bottomBar;
   const by = bar.y + (bar.h - S.button_h) / 2;
@@ -34,8 +36,15 @@ export function createPlayScreen(game) {
     offset: { id: "offset", x: W - S.bar_margin - S.toggle_w, y: by, w: S.toggle_w, h: S.button_h },
   };
 
+  const E = P.end;
+  const endX0 = (W - (2 * E.btn_w + E.btn_gap)) / 2;
+  const endButtons = {
+    replay: { id: "replay", x: endX0, y: E.btn_y, w: E.btn_w, h: E.btn_h },
+    back: { id: "back", x: endX0 + E.btn_w + E.btn_gap, y: E.btn_y, w: E.btn_w, h: E.btn_h },
+  };
+
   const inRect = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-  const buttonAt = (x, y) => Object.values(buttons).find((b) => inRect(b, x, y)) || null;
+  const buttonAt = (x, y) => Object.values(sim && sim.over ? endButtons : buttons).find((b) => inRect(b, x, y)) || null;
 
   // Point utilisé pour tracer : le doigt, ou le curseur décalé au-dessus du doigt.
   const aim = (x, y) => (cursorOffset ? { x, y: y - cfg.input.cursor_offset_px } : { x, y });
@@ -272,6 +281,95 @@ export function createPlayScreen(game) {
     ctx.restore();
   }
 
+  // File d'attente : anneau de 10 pastilles autour du bâtiment, une pastille pleine par créature qui attend.
+  function drawQueue(ctx, b) {
+    const n = b.kind === "house" ? b.queue : b.queue.length;
+    if (n <= 0) return;
+    const Q = P.queue;
+    const pal = cfg.palette[b.color];
+    const slots = cfg.panic.queue_max;
+    for (let i = 0; i < slots; i++) {
+      const a = -Math.PI / 2 + (i / slots) * Math.PI * 2;
+      const x = b.x + Math.cos(a) * Q.ring_r * unit;
+      const y = b.y + Math.sin(a) * Q.ring_r * unit;
+      ctx.beginPath();
+      ctx.arc(x, y, Q.dot_r, 0, Math.PI * 2);
+      if (i < n) {
+        ctx.fillStyle = pal.main;
+        ctx.strokeStyle = pal.dark;
+        ctx.lineWidth = Q.outline;
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.save();
+        ctx.globalAlpha = Q.empty_alpha;
+        ctx.strokeStyle = C.text;
+        ctx.lineWidth = Q.outline;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // Anneau rouge qui se vide autour d'une file en débordement : le temps qu'il reste avant la brume.
+  function drawPanicRing(ctx, b) {
+    const K = P.panic;
+    const frac = sim.panic.left / sim.panic.total;
+    ctx.save();
+    ctx.globalAlpha = K.ring_color_alpha;
+    ctx.strokeStyle = PC.warn;
+    ctx.lineWidth = K.ring_w;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, K.ring_r * unit, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Brume violette qui monte sur les bords de la carte.
+  function drawMist(ctx) {
+    if (mistK <= 0.002) return;
+    const L = layout;
+    const cx = L.gridX + L.gridW / 2;
+    const cy = L.gridY + L.gridH / 2;
+    const rMax = Math.hypot(L.gridW, L.gridH) / 2;
+    const M = P.mist;
+    const rIn = rMax * (M.inner_start + (M.inner_end - M.inner_start) * mistK);
+    const g = ctx.createRadialGradient(cx, cy, Math.min(rIn, rMax - 1), cx, cy, rMax);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, M.color);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(L.gridX, L.gridY, L.gridW, L.gridH);
+    ctx.clip();
+    ctx.globalAlpha = M.max_alpha * mistK;
+    ctx.fillStyle = g;
+    ctx.fillRect(L.gridX, L.gridY, L.gridW, L.gridH);
+    ctx.restore();
+  }
+
+  // Fin de partie (provisoire : l'écran complet viendra à l'étape C5) : voile, titre, score, deux boutons.
+  function drawEnd(ctx) {
+    ctx.fillStyle = E.veil;
+    ctx.fillRect(0, 0, W, layout.height);
+    drawText(ctx, t("end.title"), W / 2, E.title_y, {
+      font: ui.font, size: E.title_font, color: C.text, weight: 800, maxWidth: E.title_max_w,
+      shadow: { color: C.text_shadow, dy: S.shadow_dy },
+    });
+    drawText(ctx, t("end.deliveries", { n: sim.deliveries }), W / 2, E.stats_y, { font: ui.font, size: E.line_font, color: C.text, weight: 700 });
+    drawText(ctx, t("end.days", { n: sim.daysHeld }), W / 2, E.stats_y + E.line_gap, { font: ui.font, size: E.line_font, color: C.text, weight: 700 });
+    const down = (b) => (pressed === b ? S.shadow_dy / 2 : 0);
+    for (const b of Object.values(endButtons)) {
+      const primary = b.id === "replay";
+      ctx.fillStyle = primary ? C.button_selected : C.button;
+      roundRectPath(ctx, b.x, b.y + down(b), b.w, b.h, S.button_radius);
+      ctx.fill();
+      drawText(ctx, t(primary ? "end.replay" : "end.back"), b.x + b.w / 2, b.y + b.h / 2 + down(b), {
+        font: ui.font, size: E.btn_font, color: primary ? C.text_dark : C.text, weight: 800, maxWidth: b.w - 40,
+      });
+    }
+  }
+
   function drawCreature(ctx, cr, alpha) {
     const pal = cfg.palette[cr.color];
     const x = cr.px + (cr.x - cr.px) * alpha;
@@ -424,6 +522,7 @@ export function createPlayScreen(game) {
     enter() {
       cursorOffset = !!getSettings().cursor_offset;
       sim = createSim(cfg, layout, Date.now() >>> 0); // la graine vient de l'horloge ; tout le reste est déterministe
+      mistK = 0;
       finger = null;
       pressed = null;
       startedAtDown = false;
@@ -431,6 +530,8 @@ export function createPlayScreen(game) {
 
     update() {
       sim.step();
+      const target = sim.over ? 1 : sim.panic.active ? 1 - sim.panic.left / sim.panic.total : 0;
+      mistK += (target - mistK) * P.mist.ease;
     },
 
     render(ctx, alpha) {
@@ -464,6 +565,8 @@ export function createPlayScreen(game) {
       // créatures sous les bâtiments : elles sortent de la chaumière et entrent dans l'atelier
       for (const cr of sim.creatures) drawCreature(ctx, cr, alpha);
       for (const b of sim.buildings) drawBuilding(ctx, b, tickF);
+      for (const b of sim.buildings) drawQueue(ctx, b);
+      for (const b of sim.buildings) if (b.over) drawPanicRing(ctx, b);
 
       // petits « +N » qui montent
       for (const p of sim.popups) {
@@ -497,11 +600,23 @@ export function createPlayScreen(game) {
         ctx.fill();
       }
 
+      drawMist(ctx);
       drawHud(ctx, alpha);
       drawButtons(ctx);
+      if (sim.over) drawEnd(ctx);
     },
 
     pointer(type, x, y) {
+      if (sim.over) {
+        // fin de partie : seuls les deux boutons répondent
+        if (type === "down") pressed = buttonAt(x, y);
+        else if (type !== "move") {
+          const b = pressed;
+          pressed = null;
+          if (type === "up" && b && inRect(b, x, y)) game.goto(b.id === "replay" ? "play" : "title");
+        }
+        return;
+      }
       if (type === "down") {
         const b = buttonAt(x, y);
         if (b) {

@@ -128,6 +128,8 @@ export function createSim(cfg, layout, seed) {
   const B = cfg.buildings;
   const R = cfg.roads;
   const CR = cfg.creatures;
+  const T = cfg.traffic;
+  const PAN = cfg.panic;
   const TL = cfg.tiles;
   const D = cfg.days;
   const popupLife = cfg.ui.play.popup.life_s;
@@ -137,6 +139,11 @@ export function createSim(cfg, layout, seed) {
   const streams = createStreams(seed, cfg.rng.streams);
   const unit = B.size * cell; // côté d'un bâtiment
   const costOf = (len) => (len / cell) * TL.cost_per_cell; // 1 dalle par 54 px de chemin
+  const gapPx = (cr) => T.gap_cells * cell * cr.size; // écart entre deux créatures : 0,7 case × taille
+  const crossTicks = ticks(T.cross_s);
+  const stuckTicks = ticks(T.stuck_s);
+  const deadlockTicks = ticks(T.deadlock_s);
+  const unloadTicks = ticks(T.unload_s);
 
   const nodes = new Map(); // id → { id, x, y, door (id du bâtiment, 0 sinon), adj: [{ to, edge }] }
   const edges = new Map(); // id → { id, a, b, len, placedAt }
@@ -152,6 +159,7 @@ export function createSim(cfg, layout, seed) {
     dayTicks: ticks(D.length_s),
     tiles: TL.start, // nombre réel : un chemin coûte 1 dalle pour 54 px, l'affichage arrondit vers le bas
     deliveries: 0,
+    produced: 0, // créatures fabriquées par toutes les chaumières (pour vérifier qu'aucune ne se perd ni ne se dédouble)
     noTilesFlash: 0, // secondes restantes du clignotement « plus de dalles »
     gainFx: null, // { n, age } : « +18 » affiché dans la barre du haut après un gain de fin de journée
     nodes,
@@ -161,6 +169,9 @@ export function createSim(cfg, layout, seed) {
     sites: [], // chantiers en cours : { id, kind, color, c, r, x, y, left, total }
     creatures: [],
     popups: [],
+    panic: { active: false, left: ticks(PAN.seconds), total: ticks(PAN.seconds) }, // compteur de brume
+    over: false, // la brume est tombée : la partie est finie
+    daysHeld: 0,
     dist: {}, // couleur → Map(nœud → distance jusqu'à l'atelier le plus proche)
     stroke: null,
     nextId: 1,
@@ -193,6 +204,10 @@ export function createSim(cfg, layout, seed) {
       y: q.y + half,
       timer: kind === "house" ? B.house.first_spawn_s : 0,
       bumpAt: -1000,
+      queue: kind === "house" ? 0 : [], // chaumière : nombre de créatures qui attendent ; atelier : créatures arrivées, à décharger
+      cool: 0, // chaumière : pas avant la prochaine sortie
+      unload: 0, // atelier : pas avant le prochain déchargement
+      over: false, // file en débordement (10 ou plus, tant qu'elle n'est pas redescendue à 7)
     };
     sim.buildings.push(b);
     dirty = true; // un nouveau bâtiment change les distances (nouvel atelier, nouvelle couleur)
@@ -472,16 +487,25 @@ export function createSim(cfg, layout, seed) {
     if (dirty) rebuildDist();
   }
 
-  // Une créature dont le tronçon a disparu s'évanouit.
+  // Une créature qui n'a plus de route (tronçon effacé) retourne dans la file de sa chaumière : ni perdue ni dédoublée.
+  function sendHome(cr) {
+    if (cr.gone) return;
+    cr.gone = true;
+    cr.done = true;
+    cr.inQueue = 0;
+    const h = buildingById(cr.home);
+    if (h) h.queue++;
+  }
+
   function dropLostCreatures() {
     for (const cr of sim.creatures) {
       if (cr.stage === "enter") continue;
       if (cr.stage === "exit") {
-        if (!nodes.has(cr.next)) cr.done = true;
-      } else if (cr.next) {
-        if (!edgeBetween(cr.node, cr.next)) cr.done = true;
+        if (!nodes.has(cr.next)) sendHome(cr);
+      } else if (cr.next !== null) {
+        if (!edgeBetween(cr.node, cr.next)) sendHome(cr);
       } else if (!nodes.has(cr.node)) {
-        cr.done = true;
+        sendHome(cr);
       }
     }
     sim.creatures = sim.creatures.filter((cr) => !cr.done);
@@ -816,72 +840,28 @@ export function createSim(cfg, layout, seed) {
     return { edges: chain.size, refund };
   };
 
-  // ---------- Créatures ----------
+  // ---------- Créatures, files d'attente, croisements ----------
 
   const spawnInterval = (day) =>
     Math.max(B.house.interval_min_s, B.house.interval_base_s * Math.pow(B.house.interval_decay, day - 1));
 
-  // Sans route vers un atelier de sa couleur, la chaumière ne produit rien (les files d'attente viennent en V1, C4).
-  function trySpawn(house) {
-    const d = sim.dist[house.color];
-    if (!d) return false;
-    let best = null;
-    let bestD = INF;
-    for (const n of nodes.values()) {
-      if (n.door !== house.id || !n.adj.length) continue;
-      const v = d.get(n.id);
-      if (v !== undefined && v < bestD) {
-        bestD = v;
-        best = n;
-      }
-    }
-    if (!best) return false;
-    sim.creatures.push({
-      id: sim.nextId++,
-      color: house.color,
-      x: house.x,
-      y: house.y,
-      px: house.x,
-      py: house.y,
-      dx: 0,
-      dy: 1,
-      age: 0,
-      stage: "exit", // exit : de la chaumière à sa porte, walk : sur le chemin, enter : de la porte à l'atelier
-      node: null, // dernier nœud atteint
-      next: best.id, // nœud visé
-      tx: best.x,
-      ty: best.y,
-      moving: true,
-      dest: null,
-      done: false,
-    });
-    return true;
+  const isJunction = (id) => {
+    const n = nodes.get(id);
+    return !!n && !n.door && n.adj.length >= 3; // les portes ne verrouillent pas : on y entre et on en sort librement
+  };
+
+  // Nœud d'où une créature de cette couleur entre dans son atelier : distance 0 sur une porte d'atelier.
+  function isDestNode(n, color) {
+    if (!n || !n.door) return false;
+    const d = sim.dist[color];
+    return !!d && d.get(n.id) === 0;
   }
 
-  // Choisit la prochaine destination d'une créature arrêtée sur un nœud.
-  function decide(cr) {
-    const n = nodes.get(cr.node);
-    if (!n) {
-      cr.done = true;
-      return;
-    }
-    const d = sim.dist[cr.color];
-    const here = d ? d.get(n.id) : undefined;
-    if (here === 0 && n.door) {
-      const w = buildingById(n.door);
-      if (w && w.kind === "workshop" && w.color === cr.color) {
-        cr.stage = "enter";
-        cr.dest = w;
-        cr.tx = w.x;
-        cr.ty = w.y;
-        cr.moving = true;
-        return;
-      }
-    }
-    if (here === undefined) {
-      cr.moving = false; // coupée du réseau : elle attend
-      return;
-    }
+  // Voisin vers lequel une créature de cette couleur avance depuis le nœud id (le plus court chemin), ou null.
+  function chooseNext(id, color) {
+    const n = nodes.get(id);
+    const d = sim.dist[color];
+    if (!n || !d) return null;
     let best = null;
     let bestV = INF;
     for (const { to, edge } of n.adj) {
@@ -893,12 +873,208 @@ export function createSim(cfg, layout, seed) {
         best = to;
       }
     }
-    if (best === null) {
-      cr.moving = false;
+    return best;
+  }
+
+  // Occupation des arêtes (par sens de marche) et des nœuds, photographiée au début du pas.
+  let occEdge = new Map();
+  let occNode = new Map();
+  const occKey = (e, from) => e.id * 2 + (from === e.a ? 0 : 1);
+
+  function buildOcc() {
+    occEdge = new Map();
+    occNode = new Map();
+    for (const cr of sim.creatures) {
+      if (cr.stage !== "walk" || cr.node === null) continue;
+      if (cr.next !== null) {
+        const ad = edgeBetween(cr.node, cr.next);
+        if (!ad) continue;
+        const from = nodes.get(cr.node);
+        const k = occKey(edges.get(ad.edge), cr.node);
+        let list = occEdge.get(k);
+        if (!list) occEdge.set(k, (list = []));
+        list.push({ cr, s: Math.hypot(cr.x - from.x, cr.y - from.y) });
+      } else {
+        let list = occNode.get(cr.node);
+        if (!list) occNode.set(cr.node, (list = []));
+        list.push(cr);
+      }
+    }
+  }
+
+  // Distance jusqu'à la créature qui précède sur la route de cr (INF si personne dans l'écart + marge).
+  function leaderGap(cr) {
+    const look = gapPx(cr) + T.lookahead_px;
+    const from0 = nodes.get(cr.node);
+    let acc = -Math.hypot(cr.x - from0.x, cr.y - from0.y);
+    let a = cr.node;
+    let b = cr.next;
+    let first = true;
+    for (let i = 0; i < 8; i++) {
+      const ad = edgeBetween(a, b);
+      if (!ad) return INF;
+      const e = edges.get(ad.edge);
+      const list = occEdge.get(occKey(e, a));
+      let best = INF;
+      if (list) {
+        for (const o of list) {
+          if (o.cr === cr) continue;
+          const d = acc + o.s;
+          if (first && (d < 0 || (d === 0 && o.cr.id > cr.id))) continue; // derrière nous
+          if (d < best) best = d;
+        }
+      }
+      if (best < INF) return best;
+      acc += e.len;
+      if (acc > look) return INF;
+      const waiting = occNode.get(b);
+      if (waiting && waiting.length) return acc;
+      if (isDestNode(nodes.get(b), cr.color)) return INF;
+      const nxt = chooseNext(b, cr.color);
+      if (nxt === null) return INF;
+      a = b;
+      b = nxt;
+      first = false;
+    }
+    return INF;
+  }
+
+  // Croisements : file d'arrivée par nœud, premier arrivé premier servi, une créature à la fois (cross_s de verrou).
+  const jq = new Map(); // nœud → créatures arrêtées à la ligne d'arrêt, dans l'ordre d'arrivée
+  const jbusy = new Map(); // nœud → pas jusqu'auquel le croisement est occupé
+
+  function requestEntry(cr) {
+    if (cr.inQueue === cr.next) return;
+    let q = jq.get(cr.next);
+    if (!q) jq.set(cr.next, (q = []));
+    q.push(cr);
+    cr.inQueue = cr.next;
+    cr.wait = 0;
+  }
+
+  // La première créature de la file entre si le croisement est libre et si la case de sortie a de la place.
+  // Si elle attend depuis plus de deadlock_s (blocage en boucle), elle passe quand même : jamais de blocage définitif.
+  function grantJunctions() {
+    for (const [nid, q0] of jq) {
+      const q = q0.filter((cr) => !cr.gone && cr.inQueue === nid);
+      jq.set(nid, q);
+      if (!isJunction(nid)) {
+        for (const cr of q) cr.inQueue = 0;
+        jq.delete(nid);
+        continue;
+      }
+      if (!q.length || (jbusy.get(nid) || 0) > sim.tick) continue;
+      const head = q[0];
+      let clear = true;
+      const nxt = chooseNext(nid, head.color);
+      if (nxt !== null) {
+        const ad = edgeBetween(nid, nxt);
+        const list = ad ? occEdge.get(occKey(edges.get(ad.edge), nid)) : null;
+        if (list && list.some((o) => o.s < gapPx(head))) clear = false;
+      }
+      if (clear || head.wait >= deadlockTicks) {
+        q.shift();
+        head.inQueue = 0;
+        head.granted = nid;
+        head.wait = 0;
+        jbusy.set(nid, sim.tick + crossTicks);
+      }
+    }
+  }
+
+  // Une chaumière fabrique une créature à intervalle régulier : elle rejoint la file d'attente de la chaumière.
+  // Elle sort sur le chemin dès qu'il y a une route et de la place devant la porte.
+  function bestDoor(house) {
+    const d = sim.dist[house.color];
+    if (!d) return null;
+    let best = null;
+    let bestD = INF;
+    for (const n of nodes.values()) {
+      if (n.door !== house.id || !n.adj.length) continue;
+      const v = d.get(n.id);
+      if (v !== undefined && v < bestD) {
+        bestD = v;
+        best = n;
+      }
+    }
+    return best;
+  }
+
+  function release(house) {
+    if (house.queue <= 0 || house.cool > 0) return;
+    const door = bestDoor(house);
+    if (!door) return; // pas de route : la file grossit
+    const g = T.gap_cells * cell * CR.size;
+    for (const cr of sim.creatures) {
+      if (cr.stage === "enter") continue;
+      if (Math.hypot(cr.x - door.x, cr.y - door.y) < g) return; // la porte n'est pas libre
+    }
+    house.queue--;
+    house.cool = Math.ceil(g / (CR.speed_cells_per_s * cell * dt));
+    sim.creatures.push({
+      id: sim.nextId++,
+      color: house.color,
+      home: house.id,
+      size: CR.size,
+      speed: CR.speed_cells_per_s * cell,
+      x: house.x,
+      y: house.y,
+      px: house.x,
+      py: house.y,
+      dx: 0,
+      dy: 1,
+      age: 0,
+      stage: "exit", // exit : de la chaumière à sa porte, walk : sur le chemin, enter : de la porte à l'atelier
+      node: null, // dernier nœud atteint
+      next: door.id, // nœud visé
+      tx: door.x,
+      ty: door.y,
+      moving: true,
+      dest: null,
+      inQueue: 0, // nœud de croisement dont elle attend l'accès
+      granted: 0, // nœud de croisement qu'elle a le droit de traverser
+      wait: 0,
+      stuck: 0,
+      gone: false,
+      done: false,
+    });
+  }
+
+  // Atelier : une créature arrivée à sa porte entre dans sa file, déchargée une à la fois toutes les 0,8 s.
+  function unload(w) {
+    if (w.unload > 0) {
+      w.unload--;
       return;
     }
-    const nx = nodes.get(best);
-    cr.next = best;
+    if (!w.queue.length) return;
+    const cr = w.queue.shift();
+    cr.stage = "enter";
+    cr.dest = w;
+    cr.tx = w.x;
+    cr.ty = w.y;
+    cr.moving = true;
+    cr.done = false;
+    cr.gone = false;
+    sim.creatures.push(cr);
+    w.unload = unloadTicks;
+  }
+
+  // Choisit la prochaine destination d'une créature arrêtée sur un nœud.
+  function decide(cr) {
+    if (!nodes.has(cr.node)) {
+      sendHome(cr);
+      return;
+    }
+    const nxt = chooseNext(cr.node, cr.color);
+    if (nxt === null) {
+      // coupée du réseau : elle attend un instant, puis retourne dans la file de sa chaumière
+      cr.moving = false;
+      if (++cr.stuck > stuckTicks) sendHome(cr);
+      return;
+    }
+    cr.stuck = 0;
+    const nx = nodes.get(nxt);
+    cr.next = nxt;
     cr.tx = nx.x;
     cr.ty = nx.y;
     cr.moving = true;
@@ -910,17 +1086,26 @@ export function createSim(cfg, layout, seed) {
       cr.dest.bumpAt = sim.tick;
       addPopup("delivery", cr.dest.x, cr.dest.y - unit / 2, 1);
       cr.done = true;
-    } else {
-      cr.node = cr.next;
-      cr.next = null;
-      cr.stage = "walk";
-      cr.moving = false;
+      cr.gone = true;
+      return;
+    }
+    cr.node = cr.next;
+    cr.next = null;
+    cr.stage = "walk";
+    cr.moving = false;
+    cr.granted = 0;
+    const n = nodes.get(cr.node);
+    if (isDestNode(n, cr.color)) {
+      // arrivée à la porte de l'atelier : elle rejoint sa file de déchargement
+      const w = buildingById(n.door);
+      w.queue.push(cr);
+      cr.done = true;
+      cr.gone = true;
     }
   }
 
-  function moveCreature(cr, step) {
-    let budget = step;
-    for (let guard = 0; guard < 8 && budget > 0; guard++) {
+  function moveCreature(cr, budget) {
+    for (let guard = 0; guard < 8 && budget > 1e-9; guard++) {
       if (!cr.moving) {
         decide(cr);
         if (cr.done || !cr.moving) return;
@@ -932,22 +1117,64 @@ export function createSim(cfg, layout, seed) {
         cr.dx = dx / dist;
         cr.dy = dy / dist;
       }
-      if (dist > budget) {
-        cr.x += cr.dx * budget;
-        cr.y += cr.dy * budget;
-        return;
+      let allow = budget;
+      if (cr.stage === "walk") {
+        const g = leaderGap(cr);
+        if (g < INF) allow = Math.min(allow, Math.max(0, g - gapPx(cr))); // pas de dépassement : on reste derrière
+        if (isJunction(cr.next) && cr.granted !== cr.next) {
+          const lim = dist - T.stop_px; // ligne d'arrêt avant le croisement
+          if (lim <= 1e-6) {
+            requestEntry(cr);
+            cr.wait++;
+            return;
+          }
+          allow = Math.min(allow, lim);
+        }
       }
-      cr.x = cr.tx;
-      cr.y = cr.ty;
-      budget -= dist;
-      arrive(cr);
-      if (cr.done) return;
+      if (allow <= 1e-9) return;
+      if (dist <= allow + 1e-9) {
+        cr.x = cr.tx;
+        cr.y = cr.ty;
+        budget -= dist;
+        arrive(cr);
+        if (cr.done) return;
+      } else {
+        cr.x += cr.dx * allow;
+        cr.y += cr.dy * allow;
+        budget -= allow;
+      }
+    }
+  }
+
+  // Brume : une file de 10 ou plus lance le compteur de 10 s ; il s'arrête quand toutes les files sont redescendues
+  // à 7 ou moins (et repart de 10 s au prochain débordement) ; à zéro, la partie s'arrête.
+  function updatePanic() {
+    let any = false;
+    for (const b of sim.buildings) {
+      const n = b.kind === "house" ? b.queue : b.queue.length;
+      if (n >= PAN.queue_max) b.over = true;
+      else if (n <= PAN.release_at) b.over = false;
+      if (b.over) any = true;
+    }
+    const p = sim.panic;
+    if (any) {
+      p.active = true;
+      p.left--;
+      if (p.left <= 0) {
+        p.left = 0;
+        sim.over = true;
+        sim.daysHeld = sim.day - 1;
+      }
+    } else {
+      p.active = false;
+      p.left = p.total;
     }
   }
 
   // ---------- Pas de simulation ----------
 
   sim.step = function () {
+    if (sim.over) return;
     sim.tick++;
     sim.noTilesFlash = Math.max(0, sim.noTilesFlash - dt);
 
@@ -961,23 +1188,34 @@ export function createSim(cfg, layout, seed) {
       if (sim.gainFx.age >= TL.gain_fx_s) sim.gainFx = null;
     }
 
-    const stepPx = CR.speed_cells_per_s * cell * dt;
+    flush();
+    buildOcc();
+    grantJunctions();
+
+    for (const b of sim.buildings) {
+      if (b.kind === "house") {
+        b.timer -= dt;
+        if (b.timer <= 0) {
+          b.queue++;
+          sim.produced++;
+          b.timer += spawnInterval(sim.day);
+        }
+        if (b.cool > 0) b.cool--;
+        release(b);
+      } else {
+        unload(b);
+      }
+    }
+
     for (const cr of sim.creatures) {
       cr.px = cr.x;
       cr.py = cr.y;
       cr.age += dt;
-      moveCreature(cr, stepPx);
+      moveCreature(cr, cr.speed * dt);
     }
     if (sim.creatures.some((cr) => cr.done)) sim.creatures = sim.creatures.filter((cr) => !cr.done);
 
-    for (const b of sim.buildings) {
-      if (b.kind !== "house") continue;
-      b.timer -= dt;
-      if (b.timer <= 0) {
-        trySpawn(b);
-        b.timer += spawnInterval(sim.day);
-      }
-    }
+    updatePanic();
 
     for (const p of sim.popups) p.age += dt;
     if (sim.popups.some((p) => p.age >= popupLife)) sim.popups = sim.popups.filter((p) => p.age < popupLife);

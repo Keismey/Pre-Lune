@@ -10,5 +10,10 @@
   "hud.day": "Journée",
   "opt.offset_on": "Curseur décalé : oui",
   "opt.offset_off": "Curseur décalé : non",
-  "fx.plus": "+{n}"
+  "fx.plus": "+{n}",
+  "end.title": "La brume est tombée",
+  "end.deliveries": "Livraisons : {n}",
+  "end.days": "Journées tenues : {n}",
+  "end.replay": "Rejouer",
+  "end.back": "Titre"
 }

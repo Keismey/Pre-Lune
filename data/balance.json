@@ -1,6 +1,6 @@
 {
   "game": {
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "world": {
     "width": 1080,
@@ -197,7 +197,22 @@
     }
   },
   "creatures": {
-    "speed_cells_per_s": 2.2
+    "speed_cells_per_s": 2.2,
+    "size": 1.0
+  },
+  "traffic": {
+    "gap_cells": 0.7,
+    "lookahead_px": 2,
+    "stop_px": 12,
+    "cross_s": 0.3,
+    "deadlock_s": 6,
+    "stuck_s": 1.0,
+    "unload_s": 0.8
+  },
+  "panic": {
+    "queue_max": 10,
+    "seconds": 10,
+    "release_at": 7
   },
   "input": {
     "tap_max_ms": 200,
@@ -367,6 +382,38 @@
         "popup_tile": "#ffe9a8",
         "popup_delivery": "#fff8e7",
         "shadow": "rgba(20, 10, 40, 0.25)"
+      },
+      "queue": {
+        "ring_r": 0.66,
+        "dot_r": 9,
+        "outline": 3,
+        "empty_alpha": 0.4
+      },
+      "panic": {
+        "ring_r": 0.84,
+        "ring_w": 10,
+        "ring_color_alpha": 0.95
+      },
+      "mist": {
+        "color": "#5a2d91",
+        "max_alpha": 0.8,
+        "inner_start": 1.0,
+        "inner_end": 0.35,
+        "ease": 0.12
+      },
+      "end": {
+        "veil": "rgba(26, 14, 48, 0.72)",
+        "title_y": 620,
+        "title_font": 92,
+        "line_font": 60,
+        "line_gap": 96,
+        "stats_y": 820,
+        "btn_w": 420,
+        "btn_h": 150,
+        "btn_gap": 50,
+        "btn_y": 1180,
+        "btn_font": 58,
+        "title_max_w": 900
       }
     }
   }
