@@ -1,7 +1,6 @@
 {
   "game": {
-    "version": "0.2.0",
-    "start_colors": ["blue"]
+    "version": "0.3.0"
   },
   "world": {
     "width": 1080,
@@ -22,22 +21,171 @@
     "dpr_max": 2
   },
   "rng": {
-    "streams": ["carte", "apparitions", "cadeaux"]
+    "streams": [
+      "carte",
+      "apparitions",
+      "cadeaux"
+    ]
   },
   "palette": {
-    "blue": { "main": "#4d8bff", "dark": "#2f5fc4", "light": "#b9d2ff" }
+    "blue": {
+      "main": "#4d8bff",
+      "dark": "#2f5fc4",
+      "light": "#b9d2ff"
+    },
+    "red": {
+      "main": "#ff5a5a",
+      "dark": "#c23a3a",
+      "light": "#ffc4c4"
+    },
+    "yellow": {
+      "main": "#ffd33d",
+      "dark": "#c99a14",
+      "light": "#fff0a8"
+    },
+    "green": {
+      "main": "#1e9e6a",
+      "dark": "#116b46",
+      "light": "#a8ecd0"
+    }
   },
   "tiles": {
     "start": 40,
+    "per_day": 18,
+    "cap": 120,
     "cost_per_cell": 1,
     "refund_ratio": 1.0,
-    "flash_s": 0.5
+    "flash_s": 0.5,
+    "gain_fx_s": 1.4
+  },
+  "days": {
+    "length_s": 40,
+    "schedule": [
+      {
+        "day": 1,
+        "at_s": 0,
+        "color": "blue",
+        "kinds": [
+          "house",
+          "workshop"
+        ]
+      },
+      {
+        "day": 1,
+        "at_s": 18,
+        "color": "red",
+        "kinds": [
+          "house",
+          "workshop"
+        ]
+      },
+      {
+        "day": 2,
+        "at_s": 10,
+        "color": "blue",
+        "kinds": [
+          "house"
+        ]
+      },
+      {
+        "day": 3,
+        "at_s": 8,
+        "color": "red",
+        "kinds": [
+          "house"
+        ]
+      },
+      {
+        "day": 3,
+        "at_s": 24,
+        "color": "blue",
+        "kinds": [
+          "workshop"
+        ]
+      },
+      {
+        "day": 4,
+        "at_s": 5,
+        "color": "yellow",
+        "kinds": [
+          "house",
+          "workshop"
+        ]
+      },
+      {
+        "day": 5,
+        "at_s": 12,
+        "color": "yellow",
+        "kinds": [
+          "house"
+        ]
+      },
+      {
+        "day": 5,
+        "at_s": 28,
+        "color": "red",
+        "kinds": [
+          "workshop"
+        ]
+      },
+      {
+        "day": 6,
+        "at_s": 10,
+        "color": "blue",
+        "kinds": [
+          "house"
+        ]
+      },
+      {
+        "day": 6,
+        "at_s": 25,
+        "color": "red",
+        "kinds": [
+          "house"
+        ]
+      },
+      {
+        "day": 7,
+        "at_s": 5,
+        "color": "green",
+        "kinds": [
+          "house",
+          "workshop"
+        ]
+      },
+      {
+        "day": 7,
+        "at_s": 28,
+        "color": "yellow",
+        "kinds": [
+          "house"
+        ]
+      }
+    ]
+  },
+  "roads": {
+    "step_px": 24,
+    "snap_px": 26,
+    "node_pick_px": 12,
+    "touch_px": 34,
+    "width_px": 34,
+    "door_gap_px": 24,
+    "capture_px": 34,
+    "door_merge_px": 44,
+    "block_px": 8,
+    "clear_px": 30,
+    "undo_px": 18,
+    "undo_skip": 4,
+    "tap_slop_px": 20,
+    "max_points_per_move": 40
   },
   "buildings": {
+    "site_s": 4,
     "size": 2,
     "start_radius_cells": 1.5,
     "max_doors": 3,
-    "min_gap": 3,
+    "min_gap": 2,
+    "min_gap_floor": 1,
     "edge_margin": 2,
     "pair_min": 6,
     "pair_max": 20,
@@ -67,8 +215,6 @@
       "button": "#5b4392",
       "button_selected": "#ffd166",
       "grass_a": "#8fcf6b",
-      "grass_b": "#84c462",
-      "grid_line": "rgba(0, 0, 0, 0.08)",
       "cell_highlight": "rgba(255, 255, 255, 0.5)"
     },
     "sizes": {
@@ -87,15 +233,23 @@
       "back_chevron": 26,
       "back_line": 12,
       "toggle_w": 520,
-      "bar_margin": 40,
-      "grid_line_w": 2
+      "bar_margin": 40
     },
     "title": {
       "seed": 20261022,
-      "sky": ["#4b3a94", "#b985d6", "#f2c6e4"],
+      "sky": [
+        "#4b3a94",
+        "#b985d6",
+        "#f2c6e4"
+      ],
       "ground_y": 1000,
       "ground": "#8fcf6b",
-      "moon": { "x": 800, "y": 330, "r": 120, "color": "#fff3c4" },
+      "moon": {
+        "x": 800,
+        "y": 330,
+        "r": 120,
+        "color": "#fff3c4"
+      },
       "title_y": 640,
       "tagline_y": 800,
       "tagline_max_w": 860,
@@ -112,7 +266,11 @@
         "path_color": "#e8d3a0",
         "path_width": 46,
         "dot_r": 28,
-        "dots": ["#4d8bff", "#ff5a5a", "#ffd33d"]
+        "dots": [
+          "#4d8bff",
+          "#ff5a5a",
+          "#ffd33d"
+        ]
       }
     },
     "play": {
@@ -144,6 +302,42 @@
         "w": 8,
         "dot_r": 12
       },
+      "head_ring_gap": 6,
+      "grass": {
+        "seed": 20261023,
+        "patches": 46,
+        "r_min": 90,
+        "r_max": 230,
+        "alpha": 0.15,
+        "light": "#b4e68c",
+        "dark": "#6fae52"
+      },
+      "clock": {
+        "r": 34,
+        "w": 11,
+        "y": 50,
+        "num_font": 40,
+        "label_y": 104
+      },
+      "site": {
+        "fill_alpha": 0.3,
+        "border_w": 5,
+        "dash": [
+          16,
+          12
+        ],
+        "post_w": 10,
+        "post_h": 0.34,
+        "board_w": 0.5,
+        "board_h": 0.24,
+        "ring_r": 0.7,
+        "ring_w": 10,
+        "ring_alpha": 0.9,
+        "dust_count": 4,
+        "dust_r": 15,
+        "dust_swing": 12,
+        "dust_period_s": 1.2
+      },
       "hud": {
         "value_font": 68,
         "label_font": 28,
@@ -153,11 +347,20 @@
         "value_y": 54,
         "label_y": 104,
         "shake_px": 8,
-        "shake_hz": 30
+        "shake_hz": 30,
+        "gain_dx": 250,
+        "gain_rise": 40
       },
       "colors": {
         "tile": "#ecd9a3",
         "grout": "#cdb583",
+        "site_post": "#8a5a2b",
+        "site_border": "rgba(255, 248, 231, 0.9)",
+        "dust": "rgba(255, 248, 231, 0.55)",
+        "clock_track": "rgba(255, 248, 231, 0.22)",
+        "clock_fill": "#ffd166",
+        "hud_delivery_fill": "#fff8e7",
+        "hud_delivery_stroke": "#5b4392",
         "head": "#fff8e7",
         "cursor": "#fff8e7",
         "warn": "#ff6b6b",

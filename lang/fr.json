@@ -7,6 +7,7 @@
   "lang.en": "EN",
   "hud.tiles": "Dalles",
   "hud.deliveries": "Livraisons",
+  "hud.day": "Journée",
   "opt.offset_on": "Curseur décalé : oui",
   "opt.offset_off": "Curseur décalé : non",
   "fx.plus": "+{n}"

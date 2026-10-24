@@ -1,9 +1,11 @@
-// Écran de partie (V0, partie 2) : une couleur, le tracé au doigt, les créatures qui livrent,
-// l'effacement d'un tap, l'option de décalage du curseur. Formes simples en attendant les images.
+// Écran de partie (V1, partie 1) : chemins libres au doigt, chantiers et bâtiments qui apparaissent, créatures qui
+// livrent, journée de 40 s avec son anneau d'horloge, effacement d'un tap, option de décalage du curseur.
+// Formes simples en attendant les images.
 
 import { t } from "../i18n.js";
 import { getSettings, setSetting } from "../save.js";
 import { createSim } from "../sim.js";
+import { createRng } from "../rng.js";
 import { drawText, roundRectPath } from "../draw.js";
 
 export function createPlayScreen(game) {
@@ -40,14 +42,179 @@ export function createPlayScreen(game) {
 
   // ---------- Dessin ----------
 
-  function drawTile(ctx, c, r, scale) {
-    const q = layout.cellRect(c, r);
-    ctx.fillStyle = PC.grout;
-    ctx.fillRect(q.x, q.y, q.w, q.h);
-    const side = (q.w - 2 * P.tile_inset) * scale;
-    ctx.fillStyle = PC.tile;
-    roundRectPath(ctx, q.x + q.w / 2 - side / 2, q.y + q.h / 2 - side / 2, side, side, P.tile_radius);
+  // Herbe : un aplat et quelques taches très douces (dégradés radiaux) tirées d'une graine fixe, dessinées une seule
+  // fois dans une image. Pas de damier, pas de grille.
+  const grass = (() => {
+    const L = layout;
+    const cv = document.createElement("canvas");
+    cv.width = L.gridW;
+    cv.height = L.gridH;
+    const g = cv.getContext("2d");
+    g.fillStyle = C.grass_a;
+    g.fillRect(0, 0, cv.width, cv.height);
+    const rng = createRng(P.grass.seed);
+    for (let i = 0; i < P.grass.patches; i++) {
+      const x = rng.next() * cv.width;
+      const y = rng.next() * cv.height;
+      const r = rng.range(P.grass.r_min, P.grass.r_max);
+      const col = rng.next() < 0.5 ? P.grass.light : P.grass.dark;
+      const grad = g.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, col);
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      g.globalAlpha = P.grass.alpha;
+      g.fillStyle = grad;
+      g.fillRect(x - r, y - r, 2 * r, 2 * r);
+    }
+    return cv;
+  })();
+
+  const drawGrass = (ctx) => ctx.drawImage(grass, layout.gridX, layout.gridY);
+
+  // Les chemins sont découpés en chaînes (entre deux croisements, bouts ou portes), redessinées en courbes lissées.
+  // Le découpage est mis en cache tant que le réseau ne change pas.
+  let roadCache = { version: -1, chains: [] };
+
+  function buildChains() {
+    const nodes = sim.nodes;
+    const edges = sim.edges;
+    const used = new Set();
+    const chains = [];
+    const follow = (startId, first) => {
+      const pts = [nodes.get(startId)];
+      let prevEdge = first.edge;
+      let cur = nodes.get(first.to);
+      used.add(first.edge);
+      pts.push(cur);
+      while (cur.adj.length === 2 && !cur.door && cur.id !== startId) {
+        const nxt = cur.adj.find((a) => a.edge !== prevEdge);
+        if (!nxt || used.has(nxt.edge)) break;
+        used.add(nxt.edge);
+        prevEdge = nxt.edge;
+        cur = nodes.get(nxt.to);
+        pts.push(cur);
+      }
+      chains.push(pts.map((n) => ({ x: n.x, y: n.y })));
+    };
+    for (const n of nodes.values()) {
+      if (n.adj.length === 2 && !n.door) continue;
+      for (const a of n.adj) if (!used.has(a.edge)) follow(n.id, a);
+    }
+    for (const e of edges.values()) {
+      if (!used.has(e.id)) follow(e.a, nodes.get(e.a).adj.find((a) => a.edge === e.id)); // boucle fermée
+    }
+    // petit tronçon entre chaque porte et le mur du bâtiment
+    for (const n of nodes.values()) {
+      if (!n.door) continue;
+      const b = sim.buildings.find((x) => x.id === n.door);
+      if (!b) continue;
+      const half = unit / 2;
+      const bx = Math.min(b.x + half, Math.max(b.x - half, n.x));
+      const by = Math.min(b.y + half, Math.max(b.y - half, n.y));
+      chains.push([{ x: n.x, y: n.y }, { x: bx, y: by }]);
+    }
+    roadCache = { version: sim.graphVersion, chains };
+  }
+
+  function chainPath(ctx, pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+
+  function drawRoads(ctx, tickF) {
+    if (roadCache.version !== sim.graphVersion) buildChains();
+    const W0 = cfg.roads.width_px;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = PC.grout;
+    ctx.lineWidth = W0;
+    for (const pts of roadCache.chains) {
+      chainPath(ctx, pts);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = PC.tile;
+    ctx.lineWidth = W0 - 2 * P.tile_inset;
+    for (const pts of roadCache.chains) {
+      chainPath(ctx, pts);
+      ctx.stroke();
+    }
+    // les segments qui viennent d'être posés rebondissent (un renflement qui s'estompe)
+    for (const e of sim.edges.values()) {
+      const age = tickF - e.placedAt;
+      if (age < 0 || age >= P.bounce_ticks) continue;
+      const a = sim.nodes.get(e.a);
+      const b = sim.nodes.get(e.b);
+      const k = 1 + P.bounce_amp * Math.sin((Math.PI * age) / P.bounce_ticks);
+      ctx.strokeStyle = PC.tile;
+      ctx.lineWidth = (W0 - 2 * P.tile_inset) * k;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+  }
+
+  // Chantier : zone réservée en pointillés, panneau, poussière, anneau qui se remplit pendant les 4 s.
+  function drawSite(ctx, s, tickF) {
+    const pal = cfg.palette[s.color];
+    const K = P.site;
+    const u = unit;
+    const prog = Math.min(1, Math.max(0, 1 - (s.left - (tickF - sim.tick)) / s.total));
+    const x0 = s.x - u / 2;
+    const y0 = s.y - u / 2;
+
+    ctx.save();
+    ctx.globalAlpha = K.fill_alpha;
+    ctx.fillStyle = pal.main;
+    roundRectPath(ctx, x0, y0, u, u, P.tile_radius);
     ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.setLineDash(K.dash);
+    ctx.strokeStyle = PC.site_border;
+    ctx.lineWidth = K.border_w;
+    roundRectPath(ctx, x0, y0, u, u, P.tile_radius);
+    ctx.stroke();
+    ctx.restore();
+
+    // panneau planté au milieu : un poteau et une planche de la couleur du bâtiment
+    ctx.fillStyle = PC.site_post;
+    ctx.fillRect(s.x - K.post_w / 2, s.y - u * 0.02, K.post_w, u * K.post_h);
+    ctx.fillStyle = pal.main;
+    ctx.strokeStyle = pal.dark;
+    ctx.lineWidth = CRT.outline;
+    roundRectPath(ctx, s.x - (u * K.board_w) / 2, s.y - u * 0.24, u * K.board_w, u * K.board_h, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    // poussière : quelques ronds qui tournent autour du chantier
+    const time = (tickF / cfg.loop.sim_hz) / K.dust_period_s;
+    ctx.fillStyle = PC.dust;
+    for (let i = 0; i < K.dust_count; i++) {
+      const a = (time + i / K.dust_count) * Math.PI * 2;
+      const wob = Math.sin(a * 2);
+      ctx.beginPath();
+      ctx.arc(s.x + Math.cos(a) * u * 0.38, s.y + u * 0.26 + wob * K.dust_swing, K.dust_r * (0.75 + 0.25 * wob), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // anneau de progression
+    ctx.save();
+    ctx.globalAlpha = K.ring_alpha;
+    ctx.strokeStyle = pal.main;
+    ctx.lineWidth = K.ring_w;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, u * K.ring_r, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawBuilding(ctx, b, tickF) {
@@ -128,7 +295,7 @@ export function createPlayScreen(game) {
     ctx.fill();
   }
 
-  function drawHud(ctx) {
+  function drawHud(ctx, alpha) {
     const L = layout;
     ctx.fillStyle = C.bar;
     ctx.fillRect(L.topBar.x, L.topBar.y, L.topBar.w, L.topBar.h);
@@ -147,13 +314,26 @@ export function createPlayScreen(game) {
     const inner = H.icon - 2 * P.tile_inset * 2;
     roundRectPath(ctx, ix - inner / 2, H.value_y - inner / 2, inner, inner, P.tile_radius / 2);
     ctx.fill();
-    drawText(ctx, String(sim.tiles), ix + H.icon / 2 + H.gap, H.value_y, {
+    drawText(ctx, String(Math.floor(sim.tiles + 1e-6)), ix + H.icon / 2 + H.gap, H.value_y, {
       font: ui.font,
       size: H.value_font,
       color: valueColor,
       weight: 800,
       align: "left",
     });
+    // gain de fin de journée : « +18 » qui monte à côté du compteur
+    if (sim.gainFx) {
+      const k = sim.gainFx.age / cfg.tiles.gain_fx_s;
+      drawText(ctx, t("fx.plus", { n: sim.gainFx.n }), H.pad + H.gain_dx, H.value_y - H.gain_rise * k, {
+        font: ui.font,
+        size: P.popup.font,
+        color: PC.popup_tile,
+        weight: 800,
+        align: "left",
+        alpha: 1 - k * k,
+        shadow: { color: C.text_shadow, dy: S.shadow_dy / 2 },
+      });
+    }
     drawText(ctx, t("hud.tiles"), H.pad + shake, H.label_y, {
       font: ui.font,
       size: H.label_font,
@@ -163,11 +343,27 @@ export function createPlayScreen(game) {
       alpha: 0.8,
     });
 
+    // journée : anneau d'horloge au centre, le numéro dedans, « Journée » dessous
+    const K = P.clock;
+    const cx = W / 2;
+    const frac = Math.min(1, (sim.dayTick + alpha) / sim.dayTicks);
+    ctx.lineCap = "round";
+    ctx.lineWidth = K.w;
+    ctx.strokeStyle = PC.clock_track;
+    ctx.beginPath();
+    ctx.arc(cx, K.y, K.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = PC.clock_fill;
+    ctx.beginPath();
+    ctx.arc(cx, K.y, K.r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.stroke();
+    drawText(ctx, String(sim.day), cx, K.y, { font: ui.font, size: K.num_font, color: C.text, weight: 800 });
+    drawText(ctx, t("hud.day"), cx, K.label_y, { font: ui.font, size: H.label_font, color: C.text, weight: 600, alpha: 0.8 });
+
     // livraisons : icône à droite, valeur à sa gauche
     const rx = W - H.pad - H.icon / 2;
-    const pal = cfg.palette[cfg.game.start_colors[0]];
-    ctx.fillStyle = pal.main;
-    ctx.strokeStyle = pal.dark;
+    ctx.fillStyle = PC.hud_delivery_fill;
+    ctx.strokeStyle = PC.hud_delivery_stroke;
     ctx.lineWidth = CRT.outline;
     ctx.beginPath();
     ctx.arc(rx, H.value_y, H.icon / 2 - CRT.outline, 0, Math.PI * 2);
@@ -241,53 +437,21 @@ export function createPlayScreen(game) {
       const L = layout;
       const tickF = sim.tick + alpha;
 
-      // herbe en damier léger
-      for (let r = 0; r < L.rows; r++) {
-        for (let c = 0; c < L.cols; c++) {
-          const q = L.cellRect(c, r);
-          ctx.fillStyle = (c + r) % 2 === 0 ? C.grass_a : C.grass_b;
-          ctx.fillRect(q.x, q.y, q.w, q.h);
-        }
-      }
-      ctx.strokeStyle = C.grid_line;
-      ctx.lineWidth = S.grid_line_w;
-      ctx.beginPath();
-      for (let c = 0; c <= L.cols; c++) {
-        ctx.moveTo(L.gridX + c * L.cell, L.gridY);
-        ctx.lineTo(L.gridX + c * L.cell, L.gridY + L.gridH);
-      }
-      for (let r = 0; r <= L.rows; r++) {
-        ctx.moveTo(L.gridX, L.gridY + r * L.cell);
-        ctx.lineTo(L.gridX + L.gridW, L.gridY + r * L.cell);
-      }
-      ctx.stroke();
+      drawGrass(ctx);
+      drawRoads(ctx, tickF);
+      for (const s of sim.sites) drawSite(ctx, s, tickF);
 
-      // dalles : celles qui viennent d'être posées rebondissent, et passent par-dessus
-      const bouncing = [];
-      for (let r = 0; r < L.rows; r++) {
-        for (let c = 0; c < L.cols; c++) {
-          const i = r * L.cols + c;
-          if (!sim.path[i]) continue;
-          const age = tickF - sim.placedAt[i];
-          if (sim.placedAt[i] >= 0 && age < P.bounce_ticks) bouncing.push([c, r, age]);
-          else drawTile(ctx, c, r, 1);
-        }
-      }
-      for (const [c, r, age] of bouncing) {
-        drawTile(ctx, c, r, 1 + P.bounce_amp * Math.sin((Math.PI * age) / P.bounce_ticks));
-      }
-
-      // tête du tracé : case entourée, ou anneau autour du bâtiment de départ
+      // tête du tracé : anneau sur son extrémité, ou autour du bâtiment de départ avant le premier mouvement
       const s = sim.stroke;
       if (s) {
         ctx.strokeStyle = PC.head;
         ctx.lineWidth = P.head_ring_w;
-        if (s.stack.length) {
-          const e = s.stack[s.stack.length - 1];
-          const q = L.cellRect(e.c, e.r);
-          roundRectPath(ctx, q.x + 2, q.y + 2, q.w - 4, q.h - 4, P.tile_radius);
+        const head = sim.headPos();
+        if (head) {
+          ctx.beginPath();
+          ctx.arc(head.x, head.y, cfg.roads.width_px / 2 + P.head_ring_gap, 0, Math.PI * 2);
           ctx.stroke();
-        } else {
+        } else if (s.building) {
           ctx.save();
           ctx.globalAlpha = P.start_ring_alpha;
           ctx.beginPath();
@@ -333,7 +497,7 @@ export function createPlayScreen(game) {
         ctx.fill();
       }
 
-      drawHud(ctx);
+      drawHud(ctx, alpha);
       drawButtons(ctx);
     },
 

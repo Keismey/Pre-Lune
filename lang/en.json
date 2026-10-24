@@ -7,6 +7,7 @@
   "lang.en": "EN",
   "hud.tiles": "Tiles",
   "hud.deliveries": "Deliveries",
+  "hud.day": "Day",
   "opt.offset_on": "Offset cursor: on",
   "opt.offset_off": "Offset cursor: off",
   "fx.plus": "+{n}"

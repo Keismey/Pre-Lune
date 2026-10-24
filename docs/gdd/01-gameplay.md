@@ -10,7 +10,7 @@
 
 | Geste | Comment | Effet |
 |---|---|---|
-| Tracer | Poser le doigt sur une chaumière, un atelier ou un chemin existant, puis glisser. Le tracé s'aimante sur la grille, sans diagonale. | Les cases traversées deviennent chemin et coûtent 1 dalle chacune. Partir d'un chemin existant crée un embranchement. |
+| Tracer | Poser le doigt sur une chaumière, un atelier ou un chemin existant, puis glisser. Le chemin suit le doigt librement (courbes, diagonales), sans grille. Il se raccorde tout seul aux chemins et aux bâtiments proches. | Le chemin coûte 1 dalle par 54 px de longueur neuve. Partir d'un chemin existant crée un embranchement. Repasser le doigt sur son propre tracé le défait et rend les dalles. |
 | Effacer | Toucher brièvement un tronçon (moins de 200 ms, sans glisser). | Le tronçon entre deux croisements disparaît et rend ses dalles. Un bouton Annuler le ramène pendant 4 s. |
 | Croiser | Tracer à travers un autre chemin. | Un croisement apparaît tout seul. Les créatures y passent une par une, donc il ralentit quand il est chargé. |
 | Poser un cadeau | Toucher son emplacement dans la barre du bas, puis la cible surlignée (ou le glisser dessus). | Rond-point, pont, feu, tunnel, chemin doré, etc. (voir Bonus). |
@@ -38,7 +38,7 @@
 
 ### Ce qui doit être satisfaisant
 
-- Le tracé s'allume à mesure que le doigt avance, avec un léger rebond à chaque case posée.
+- Le tracé s'allume à mesure que le doigt avance, avec un léger rebond à chaque segment posé.
 - Chaque livraison fait tinter une clochette, dont la note dépend de la couleur : un réseau qui fonctionne bien joue une petite mélodie.
 - Un croisement qui se vide, un rond-point posé au bon moment : la file diminue à vue d'œil.
 
@@ -53,7 +53,7 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 | Élément | Valeur | Remarque |
 |---|---|---|
 | Barre du haut | 130 px | Pause, journée et horloge, dalles, livraisons |
-| Grille | 20 × 30 cases de 54 px (1080 × 1620) | 600 cases au total ; 54 px logiques valent environ 19 px à l'écran, d'où l'aimantation du tracé |
+| Grille | 20 × 30 cases de 54 px (1080 × 1620), invisible | Elle sert à poser les bâtiments, les obstacles et l'eau, et d'unité de mesure : une « case » vaut 54 px de chemin. Les chemins, eux, ne suivent pas la grille. |
 | Barre du bas | 170 px | Annuler et emplacements de cadeaux, boutons d'au moins 48 px à l'écran |
 | Bâtiment | 2 × 2 cases | Zone d'appui pour démarrer un tracé : 1,5 case autour du centre. Maximum 3 chemins reliés par bâtiment. |
 
@@ -64,7 +64,7 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 | Durée d'une journée | 40 s de temps de jeu. Pendant un tracé, le temps passe à moitié vitesse (aide au tracé) : la journée dure alors un peu plus longtemps en vrai. |
 | Dalles au départ | 40 |
 | Dalles gagnées par journée | +18, plafond de 120 |
-| Coût d'un chemin | 1 dalle par case nouvelle. Retracer une case existante ne coûte rien. |
+| Coût d'un chemin | 1 dalle par 54 px de chemin neuf (les dalles sont comptées au dixième, l'affichage arrondit vers le bas). Repasser sur un chemin existant ne coûte rien. |
 | Effacer | 100 % des dalles rendues |
 | Annuler | Dernière action (tracé, effacement ou pose), disponible 4 s |
 | Pause de fin de journée | Le jeu s'arrête pendant le choix du cadeau |
@@ -85,7 +85,7 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 
 | Élément | Règle |
 |---|---|
-| Croisement (case avec 3 ou 4 voisins) | Une créature à la fois, 0,30 s de traversée, premier arrivé premier servi. Une créature n'entre que si la case de sortie a de la place. |
+| Croisement (point où 3 chemins ou plus se rejoignent) | Une créature à la fois, 0,30 s de traversée, premier arrivé premier servi. Une créature n'entre que si la case de sortie a de la place. |
 | Rond-point | 2 créatures en même temps, 0,30 s : débit doublé |
 | Feu de lanterne | Les axes alternent toutes les 2 s, traversée de 0,10 s sur l'axe vert : débit moyen environ ×1,5 |
 | Pont | Le chemin passe par-dessus un autre chemin sans croisement, ou franchit 1 à 3 cases d'eau |
@@ -95,7 +95,7 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 ### Apparition des bâtiments
 
 - Un **chantier** (panneau et poussière) annonce chaque bâtiment 4 s à l'avance. Pendant ce temps, la zone est réservée : on ne peut plus y tracer.
-- Position : case libre à au moins 3 cases de tout autre bâtiment, à 2 cases des bords, hors obstacles. La chaumière et l'atelier de la même couleur sont à 6 cases minimum et 20 cases maximum l'un de l'autre.
+- Position : case libre à au moins 2 cases vides de tout autre bâtiment (1 case en dernier recours quand la carte est pleine), à 2 cases des bords, hors obstacles, à l'écart des chemins déjà tracés. La chaumière et l'atelier de la même couleur sont à 6 cases minimum et 20 cases maximum l'un de l'autre (distance en cases, déplacements horizontaux plus verticaux).
 - Règle de proportion : au plus 3 chaumières par atelier d'une même couleur.
 - Plafond de 26 bâtiments par carte (20 sur l'île).
 

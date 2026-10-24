@@ -67,7 +67,7 @@ Keismey Studio. Jeu navigateur mobile · Canvas 2D · une main · sessions de 5 
 - **Vue :** carte vue de dessus, fixe, tout le hameau visible. Pas de zoom ni de déplacement de caméra.
 - **Lumière :** la journée est visible. Le terrain passe du matin clair au soir chaud en 40 s, puis revient au matin. La brume violette n'apparaît que pour la panique, afin qu'elle reste un signal clair.
 - **Lisibilité du trafic :** les créatures se serrent, une file se voit sur l'anneau de 10 pastilles, un croisement chargé vibre légèrement.
-- **Retour sensoriel :** tic de bois et léger rebond à chaque case posée, clochette de couleur à chaque livraison, vibration courte à la pose d'un cadeau, battement qui accélère pendant la panique.
+- **Retour sensoriel :** tic de bois et léger rebond à chaque segment posé, clochette de couleur à chaque livraison, vibration courte à la pose d'un cadeau, battement qui accélère pendant la panique.
 - **Accessibilité :** symbole sur chaque couleur, animations réduites, mode gaucher (barre du bas et emplacements inversés), aide au tracé, contrastes forts, sons réglables.
 - **Ton :** chaleureux, fantasy colorée, miniature vivante. Textes courts, tutoiement partout.
 - **Tutoriel :** les 3 premières journées, sans écran de règles. Une flèche animée montre le premier tracé, puis une bulle explique l'effacement, puis la panique la première fois qu'une file dépasse 7.
@@ -82,12 +82,12 @@ Keismey Studio. Jeu navigateur mobile · Canvas 2D · une main · sessions de 5 
 
 ### Réseau et trafic
 
-- La carte est un tableau de cases (`Uint8Array` pour l'état, un tableau pour les connexions). Deux cases de chemin voisines sont reliées ; un pont coupe le lien latéral de sa case ; un tunnel ajoute un lien entre ses deux portails.
-- **Champ de distance par couleur :** à chaque changement du réseau, un Dijkstra part de tous les ateliers d'une couleur et donne à chaque case le temps de trajet jusqu'au plus proche. Une créature avance vers la case voisine de plus faible valeur. Aucun trajet n'est mémorisé : changer le réseau reroute tout le monde sans calcul spécial. 6 couleurs × 600 cases, très léger.
-- Chaque case de chemin tient une file ordonnée de créatures. La vitesse est le minimum entre la vitesse de l'espèce et celle de la créature qui précède.
-- Croisements : un verrou par case (capacité 1, 2 pour un rond-point, alternance pour un feu), file d'arrivée premier servi, entrée refusée si la case de sortie est pleine pour éviter les blocages.
-- Effacement d'un tronçon : suppression des cases de degré 2 entre deux croisements, extrémités ou bâtiments, et rendu des dalles. Les créatures présentes sur ces cases retournent dans la file de leur chaumière.
-- Tracé : le doigt est converti en case, les sauts rapides sont comblés par une ligne à 4 voisins, sans diagonale.
+- Les bâtiments, obstacles et l'eau vivent sur la grille de la carte. Les chemins forment un **graphe** : des nœuds (points) reliés par des arêtes (segments droits de 24 px environ). Un croisement est un nœud à 3 arêtes ou plus ; un bâtiment est relié par des **portes** (nœuds posés à 24 px de ses murs, 3 chemins reliés au plus). Un pont coupe le lien de croisement entre deux arêtes ; un tunnel ajoute une arête entre ses deux portails.
+- **Champ de distance par couleur :** à chaque changement du réseau, un Dijkstra part des portes de tous les ateliers d'une couleur et donne à chaque nœud la distance jusqu'au plus proche. Une créature avance vers le nœud voisin qui minimise longueur de l'arête + distance. Aucun trajet n'est mémorisé : changer le réseau reroute tout le monde sans calcul spécial. 6 couleurs × quelques centaines de nœuds, très léger.
+- Chaque arête tient une file ordonnée de créatures. La vitesse est le minimum entre la vitesse de l'espèce et celle de la créature qui précède.
+- Croisements : un verrou par nœud de croisement (capacité 1, 2 pour un rond-point, alternance pour un feu), file d'arrivée premier servi, entrée refusée si la case de sortie est pleine pour éviter les blocages.
+- Effacement d'un tronçon : suppression des arêtes entre deux croisements, extrémités ou portes, et rendu des dalles. Les créatures présentes sur ces arêtes retournent dans la file de leur chaumière.
+- Tracé : une « tête » suit le doigt par pas fixes de 24 px, ce qui lisse la courbe et comble les sauts rapides. Un point proche (26 px) d'un nœud ou d'une arête s'y raccorde ; un segment qui en coupe un autre crée un croisement ; la tête ne traverse ni bâtiment ni chantier. Revenir sur son propre tracé le défait.
 
 ### Données et fichiers
 
@@ -132,7 +132,7 @@ Chaque étape se termine par un jeu jouable que tu testes sur ton téléphone. O
 
 | Étape | Livrable | Validation (test sur téléphone) |
 |---|---|---|
-| **V0** Prototype | Système de langues FR/EN, grille 20 × 30, tracé au doigt aimanté, une couleur (1 chaumière, 1 atelier), créatures qui suivent le chemin, livraison et score, effacement d'un tap, décalage du curseur en option | Tracer, voir la créature arriver, effacer, le tout d'une main ; le tracé est agréable |
+| **V0** Prototype | Système de langues FR/EN, grille 20 × 30 invisible, tracé au doigt libre, une couleur (1 chaumière, 1 atelier), créatures qui suivent le chemin, livraison et score, effacement d'un tap, décalage du curseur en option | Tracer, voir la créature arriver, effacer, le tout d'une main ; le tracé est agréable |
 | **V1** Cœur de jeu | Couleurs rouge et jaune, apparitions des journées 1 à 7 avec chantiers, croisements, files d'attente, panique et défaite, dalles, journées de 40 s, aide au tracé, Annuler, sauvegarde | Une partie complète de 4 à 6 minutes ; l'embouteillage se comprend sans texte ; la sauvegarde survit à un rechargement |
 | **V2** Cadeaux et couleurs | Fin de journée avec 3 choix, barre de cadeaux, rond-point, pont, feu, sac de dalles, chemin doré, couleurs verte, violette et orange, espèces et vitesses, appui long | Les cadeaux changent les décisions ; une partie dure 5 à 8 minutes ; les 6 couleurs restent lisibles |
 | **V3** Cartes et rangs | Fleuve, Montagnes, Île, tunnel, cloche de secours, atelier de renfort, rangs, Carnet, succès, saisons | Chaque carte se joue différemment ; les déblocages arrivent au bon rythme |
