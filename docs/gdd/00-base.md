@@ -93,7 +93,7 @@ Keismey Studio. Jeu navigateur mobile · Canvas 2D · une main · sessions de 5 
 
 - `data/` : `balance.json`, `species.json`, `bonus.json`, `maps.json`. `lang/` : `fr.json`, `en.json`. `img/` : planches WebP et JSON de découpe. `snd/` : musiques et effets. `sw.js` et `manifest.webmanifest` pour l'installation et le hors ligne.
 - Sauvegarde en `localStorage`, clé `pl_save_v1` : rang, livraisons cumulées, meilleurs scores, succès, historique du défi, réglages. Identifiants uniquement, jamais de texte traduit, avec un numéro de version pour migrer.
-- Partie en cours sauvegardée à chaque fin de journée (bâtiments, chemins, cadeaux, états des flux aléatoires). Les créatures en route retournent dans la file de leur chaumière à la reprise.
+- Partie en cours sauvegardée à chaque fin de journée, à la pause, en quittant et au passage en arrière-plan (bâtiments, chemins, cadeaux, états des flux aléatoires). Les créatures en route retournent dans la file de leur chaumière à la reprise. Une partie finie efface la sauvegarde.
 - Sons : WebAudio pour les clochettes et effets simples, mp3 pour les musiques. Vibration via `navigator.vibrate` si disponible.
 - Budget : images WebP, poids total visé inférieur à 12 Mo.
 

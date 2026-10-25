@@ -55,3 +55,9 @@ export function t(key, params) {
   }
   return text;
 }
+
+// Texte avec pluriel : cherche « clé.one » (FR : 0 et 1 ; EN : 1) ou « clé.other ». {n} est ajouté aux paramètres.
+export function tn(key, n, params = {}) {
+  const one = current === "fr" ? n < 2 : n === 1;
+  return t(`${key}.${one ? "one" : "other"}`, { ...params, n });
+}

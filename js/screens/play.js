@@ -1,13 +1,14 @@
-// Écran de partie (V1, parties 1 et 2) : chemins libres au doigt, chantiers et bâtiments qui apparaissent, créatures qui
-// livrent, files d'attente (anneau de 10 pastilles), brume de panique et fin de partie, journée de 40 s avec son anneau
-// d'horloge, effacement d'un tap, option de décalage du curseur.
+// Écran de partie (V1) : chemins libres au doigt, chantiers et bâtiments qui apparaissent, créatures qui livrent, files
+// d'attente (anneau de 10 pastilles), brume de panique, journées de 40 s avec leur anneau d'horloge, effacement d'un tap,
+// et le confort : aide au tracé (demi-vitesse), Annuler pendant 4 s, pause, appui long (partenaire de même couleur),
+// sauvegarde à chaque fin de journée avec reprise, tutoriel et écran de fin de partie.
 // Formes simples en attendant les images.
 
-import { t } from "../i18n.js";
-import { getSettings, setSetting } from "../save.js";
+import { t, tn } from "../i18n.js";
+import { getSettings, setSetting, getGame, setGame, clearGame, getTuto, setTuto, recordGame } from "../save.js";
 import { createSim } from "../sim.js";
 import { createRng } from "../rng.js";
-import { drawText, roundRectPath } from "../draw.js";
+import { drawText, roundRectPath, wrapLines } from "../draw.js";
 
 export function createPlayScreen(game) {
   const { cfg, layout } = game;
@@ -18,36 +19,64 @@ export function createPlayScreen(game) {
   const PC = P.colors;
   const H = P.hud;
   const CRT = P.creature;
+  const CF = cfg.comfort;
+  const TU = cfg.tutorial;
+  const M = P.menu;
+  const E = P.end;
   const W = layout.width;
+  const hz = cfg.loop.sim_hz;
   const unit = cfg.buildings.size * layout.cell; // côté d'un bâtiment
 
   let sim = null;
+  let mode = "play"; // play | paused | resume (partie sauvegardée : continuer ou non) | end
   let cursorOffset = false;
+  let assist = true;
   let finger = null; // doigt posé (monde)
   let downAt = 0;
   let startedAtDown = false;
   let pressed = null;
   let mistK = 0; // intensité de la brume affichée (0 à 1), lissée
+  let assistK = 0; // intensité du voile d'aide au tracé (0 à 1), lissée
+  let slowCount = 0;
+  let peek = null; // bâtiment dont l'appui long montre les partenaires
+  let lastDay = 1;
+  let endInfo = null; // { best, newRecord } une fois la partie finie
+  let tuto = { draw: false, erase: false, mist: false };
+  let bubble = null; // bulle du tutoriel : { key, until (pas de simulation), warn, eraseBase }
+
+  // ---------- Boutons ----------
 
   const bar = layout.bottomBar;
   const by = bar.y + (bar.h - S.button_h) / 2;
   const buttons = {
-    back: { id: "back", x: S.bar_margin, y: by, w: S.back_w, h: S.button_h },
-    offset: { id: "offset", x: W - S.bar_margin - S.toggle_w, y: by, w: S.toggle_w, h: S.button_h },
+    pause: { id: "pause", x: 0, y: 0, w: P.pause.w, h: P.pause.h },
+    undo: { id: "undo", x: S.bar_margin, y: by, w: P.undo.w, h: S.button_h },
   };
 
-  const E = P.end;
+  const column = (ids, y0, h) => ids.map((id, i) => ({ id, x: (W - M.btn_w) / 2, y: y0 + i * (h + M.btn_gap), w: M.btn_w, h }));
   const endX0 = (W - (2 * E.btn_w + E.btn_gap)) / 2;
-  const endButtons = {
-    replay: { id: "replay", x: endX0, y: E.btn_y, w: E.btn_w, h: E.btn_h },
-    back: { id: "back", x: endX0 + E.btn_w + E.btn_gap, y: E.btn_y, w: E.btn_w, h: E.btn_h },
+  const menus = {
+    paused: [
+      ...column(["resume", "restart", "quit"], M.first_y, M.btn_h),
+      ...column(["assist", "offset"], M.first_y + 3 * (M.btn_h + M.btn_gap) + M.section_gap, M.toggle_h),
+    ],
+    resume: column(["continue", "newgame"], M.first_y, M.btn_h),
+    end: [
+      { id: "replay", x: endX0, y: E.btn_y, w: E.btn_w, h: E.btn_h },
+      { id: "back", x: endX0 + E.btn_w + E.btn_gap, y: E.btn_y, w: E.btn_w, h: E.btn_h },
+    ],
   };
 
   const inRect = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-  const buttonAt = (x, y) => Object.values(sim && sim.over ? endButtons : buttons).find((b) => inRect(b, x, y)) || null;
+  const activeButtons = () => (mode === "play" ? Object.values(buttons) : menus[mode] || []);
+  const buttonAt = (x, y) => activeButtons().find((b) => inRect(b, x, y)) || null;
+  const dn = (b) => (pressed === b ? S.shadow_dy / 2 : 0);
 
   // Point utilisé pour tracer : le doigt, ou le curseur décalé au-dessus du doigt.
   const aim = (x, y) => (cursorOffset ? { x, y: y - cfg.input.cursor_offset_px } : { x, y });
+
+  const qlen = (b) => (b.kind === "house" ? b.queue : b.queue.length);
+  const partnersOf = (b) => sim.buildings.filter((o) => o.color === b.color && o.kind !== b.kind);
 
   // ---------- Dessin ----------
 
@@ -348,28 +377,6 @@ export function createPlayScreen(game) {
     ctx.restore();
   }
 
-  // Fin de partie (provisoire : l'écran complet viendra à l'étape C5) : voile, titre, score, deux boutons.
-  function drawEnd(ctx) {
-    ctx.fillStyle = E.veil;
-    ctx.fillRect(0, 0, W, layout.height);
-    drawText(ctx, t("end.title"), W / 2, E.title_y, {
-      font: ui.font, size: E.title_font, color: C.text, weight: 800, maxWidth: E.title_max_w,
-      shadow: { color: C.text_shadow, dy: S.shadow_dy },
-    });
-    drawText(ctx, t("end.deliveries", { n: sim.deliveries }), W / 2, E.stats_y, { font: ui.font, size: E.line_font, color: C.text, weight: 700 });
-    drawText(ctx, t("end.days", { n: sim.daysHeld }), W / 2, E.stats_y + E.line_gap, { font: ui.font, size: E.line_font, color: C.text, weight: 700 });
-    const down = (b) => (pressed === b ? S.shadow_dy / 2 : 0);
-    for (const b of Object.values(endButtons)) {
-      const primary = b.id === "replay";
-      ctx.fillStyle = primary ? C.button_selected : C.button;
-      roundRectPath(ctx, b.x, b.y + down(b), b.w, b.h, S.button_radius);
-      ctx.fill();
-      drawText(ctx, t(primary ? "end.replay" : "end.back"), b.x + b.w / 2, b.y + b.h / 2 + down(b), {
-        font: ui.font, size: E.btn_font, color: primary ? C.text_dark : C.text, weight: 800, maxWidth: b.w - 40,
-      });
-    }
-  }
-
   function drawCreature(ctx, cr, alpha) {
     const pal = cfg.palette[cr.color];
     const x = cr.px + (cr.x - cr.px) * alpha;
@@ -404,7 +411,7 @@ export function createPlayScreen(game) {
     const valueColor = flash ? PC.warn : C.text;
 
     // dalles : icône à gauche, valeur à sa droite
-    const ix = H.pad + H.icon / 2 + shake;
+    const ix = H.left_pad + H.icon / 2 + shake;
     ctx.fillStyle = PC.grout;
     roundRectPath(ctx, ix - H.icon / 2, H.value_y - H.icon / 2, H.icon, H.icon, P.tile_radius);
     ctx.fill();
@@ -422,7 +429,7 @@ export function createPlayScreen(game) {
     // gain de fin de journée : « +18 » qui monte à côté du compteur
     if (sim.gainFx) {
       const k = sim.gainFx.age / cfg.tiles.gain_fx_s;
-      drawText(ctx, t("fx.plus", { n: sim.gainFx.n }), H.pad + H.gain_dx, H.value_y - H.gain_rise * k, {
+      drawText(ctx, t("fx.plus", { n: sim.gainFx.n }), H.left_pad + H.gain_dx, H.value_y - H.gain_rise * k, {
         font: ui.font,
         size: P.popup.font,
         color: PC.popup_tile,
@@ -432,7 +439,7 @@ export function createPlayScreen(game) {
         shadow: { color: C.text_shadow, dy: S.shadow_dy / 2 },
       });
     }
-    drawText(ctx, t("hud.tiles"), H.pad + shake, H.label_y, {
+    drawText(ctx, t("hud.tiles"), H.left_pad + shake, H.label_y, {
       font: ui.font,
       size: H.label_font,
       color: C.text,
@@ -484,52 +491,454 @@ export function createPlayScreen(game) {
     });
   }
 
-  function drawButtons(ctx) {
-    const down = (b) => (pressed === b ? S.shadow_dy / 2 : 0);
+  // ---------- Appui long : le partenaire de même couleur s'illumine, avec un pointillé ----------
 
-    // retour (chevron)
-    const b = buttons.back;
-    ctx.fillStyle = C.button;
-    roundRectPath(ctx, b.x, b.y + down(b), b.w, b.h, S.button_radius);
-    ctx.fill();
-    ctx.strokeStyle = C.text;
-    ctx.lineWidth = S.back_line;
+  function drawPeekLines(ctx, tickF) {
+    if (!peek) return;
+    const K = P.peek;
+    const pal = cfg.palette[peek.color];
+    ctx.save();
     ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2 + down(b);
-    ctx.beginPath();
-    ctx.moveTo(cx + S.back_chevron / 2, cy - S.back_chevron);
-    ctx.lineTo(cx - S.back_chevron / 2, cy);
-    ctx.lineTo(cx + S.back_chevron / 2, cy + S.back_chevron);
-    ctx.stroke();
+    ctx.setLineDash(K.dash);
+    ctx.lineDashOffset = -(tickF / hz) * K.dash_speed;
+    for (const o of partnersOf(peek)) {
+      ctx.globalAlpha = K.outline_alpha;
+      ctx.strokeStyle = pal.dark;
+      ctx.lineWidth = K.line_w + K.outline_extra;
+      ctx.beginPath();
+      ctx.moveTo(peek.x, peek.y);
+      ctx.lineTo(o.x, o.y);
+      ctx.stroke();
+      ctx.globalAlpha = K.line_alpha;
+      ctx.strokeStyle = pal.light;
+      ctx.lineWidth = K.line_w;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
-    // décalage du curseur : jaune quand il est actif
-    const o = buttons.offset;
-    ctx.fillStyle = cursorOffset ? C.button_selected : C.button;
-    roundRectPath(ctx, o.x, o.y + down(o), o.w, o.h, S.button_radius);
+  function drawPeekRings(ctx, tickF) {
+    if (!peek) return;
+    const K = P.peek;
+    const pal = cfg.palette[peek.color];
+    const pulse = 1 + K.pulse_amp * Math.sin((tickF / hz) * Math.PI * 2 * K.pulse_hz);
+    ctx.save();
+    ctx.globalAlpha = K.ring_alpha;
+    for (const b of [peek, ...partnersOf(peek)]) {
+      ctx.strokeStyle = pal.dark;
+      ctx.lineWidth = K.ring_w + K.outline_extra / 2;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, K.ring_r * unit * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = pal.light;
+      ctx.lineWidth = K.ring_w;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, K.ring_r * unit * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---------- Aide au tracé : un voile bleuté et un cadre quand le temps passe à moitié vitesse ----------
+
+  function drawAssist(ctx) {
+    if (assistK < 0.01) return;
+    const K = P.assist;
+    const L = layout;
+    ctx.save();
+    ctx.globalAlpha = assistK;
+    ctx.fillStyle = K.tint;
+    ctx.fillRect(L.gridX, L.gridY, L.gridW, L.gridH);
+    ctx.strokeStyle = K.edge;
+    ctx.lineWidth = K.edge_w;
+    ctx.strokeRect(L.gridX + K.edge_w / 2, L.gridY + K.edge_w / 2, L.gridW - K.edge_w, L.gridH - K.edge_w);
+    ctx.restore();
+  }
+
+  // ---------- Tutoriel : une flèche animée pour le premier tracé, puis des bulles ----------
+
+  // La bulle se met en haut de la carte, ou en bas si un bâtiment se trouve à cet endroit.
+  function bubbleCenterY(h) {
+    const K = P.tuto;
+    const hit = (cy) => sim.buildings.concat(sim.sites).some((b) => Math.abs(b.y - cy) < h / 2 + unit / 2 + K.clear);
+    return hit(K.y) && !hit(K.y_bottom) ? K.y_bottom : K.y;
+  }
+
+  function drawBubble(ctx, text, warn) {
+    const K = P.tuto;
+    ctx.save();
+    ctx.font = `700 ${K.font}px ${ui.font}`;
+    const lines = wrapLines(ctx, text, K.w - 2 * K.pad);
+    ctx.restore();
+    const h = lines.length * K.font * K.line_h + 2 * K.pad;
+    const cy = bubbleCenterY(h);
+    const x = (W - K.w) / 2;
+    const y = cy - h / 2;
+    ctx.save();
+    ctx.fillStyle = K.bg;
+    roundRectPath(ctx, x, y, K.w, h, K.radius);
     ctx.fill();
-    drawText(ctx, t(cursorOffset ? "opt.offset_on" : "opt.offset_off"), o.x + o.w / 2, o.y + o.h / 2 + down(o), {
+    ctx.strokeStyle = warn ? K.warn_border : K.border;
+    ctx.lineWidth = K.border_w;
+    ctx.stroke();
+    ctx.restore();
+    drawText(ctx, text, W / 2, cy, { font: ui.font, size: K.font, color: C.text, weight: 700, maxWidth: K.w - 2 * K.pad, lineHeight: K.line_h });
+  }
+
+  // Un « doigt » qui glisse de la première chaumière non reliée jusqu'à son atelier, en boucle.
+  function drawFingerHint(ctx, tickF) {
+    const K = P.tuto;
+    const house = sim.buildings.find((b) => b.kind === "house" && !sim.isConnected(b));
+    if (!house) return;
+    let ws = null;
+    let bestD = Infinity;
+    for (const o of partnersOf(house)) {
+      const d = Math.hypot(o.x - house.x, o.y - house.y);
+      if (d < bestD) {
+        bestD = d;
+        ws = o;
+      }
+    }
+    if (!ws) return;
+    const phase = ((tickF / hz) % K.cycle_s) / K.cycle_s;
+    const k = Math.min(1, Math.max(0, (phase - 0.15) / 0.7));
+    const e = k * k * (3 - 2 * k);
+    const alpha = Math.min(1, phase / 0.1, (1 - phase) / 0.1);
+    const x = house.x + (ws.x - house.x) * e;
+    const y = house.y + (ws.y - house.y) * e;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.setLineDash(K.dash);
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = K.line_w;
+    ctx.globalAlpha = K.line_alpha;
+    ctx.beginPath();
+    ctx.moveTo(house.x, house.y);
+    ctx.lineTo(ws.x, ws.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.fillStyle = K.finger_fill;
+    ctx.strokeStyle = K.finger_stroke;
+    ctx.lineWidth = CRT.outline;
+    ctx.beginPath();
+    ctx.arc(x, y, K.finger_r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawTutorial(ctx, tickF) {
+    if (mode !== "play") return;
+    if (bubble && sim.tick < bubble.until) {
+      drawBubble(ctx, t(bubble.key), bubble.warn);
+      return;
+    }
+    if (!tuto.draw && sim.day <= TU.days) {
+      if (!sim.stroke) drawFingerHint(ctx, tickF);
+      drawBubble(ctx, t("tuto.draw"), false);
+    }
+  }
+
+  function updateTutorial() {
+    if (bubble && sim.tick >= bubble.until) bubble = null;
+    // la brume : la première fois qu'une file dépasse le seuil de relâche
+    if (!tuto.mist && sim.buildings.some((b) => qlen(b) > cfg.panic.release_at)) {
+      tuto.mist = true;
+      setTuto("mist");
+      bubble = { key: "tuto.mist", until: sim.tick + Math.round(TU.mist_bubble_s * hz), warn: true };
+    }
+    // le tracé : jusqu'à ce qu'une chaumière soit reliée à son atelier (les 3 premières journées seulement)
+    if (!tuto.draw) {
+      const house = sim.buildings.find((b) => b.kind === "house");
+      if (sim.day > TU.days || (house && sim.isConnected(house))) {
+        const connected = sim.day <= TU.days;
+        tuto.draw = true;
+        setTuto("draw");
+        if (connected && !tuto.erase) {
+          tuto.erase = true;
+          setTuto("erase");
+          if (!bubble) bubble = { key: "tuto.erase", until: sim.tick + Math.round(TU.bubble_s * hz), warn: false, eraseBase: sim.eraseCount };
+        }
+      }
+    }
+    // un effacement réussi ferme la bulle de l'effacement
+    if (bubble && bubble.key === "tuto.erase" && sim.eraseCount > bubble.eraseBase) bubble = null;
+  }
+
+  // ---------- Boutons dessinés ----------
+
+  function drawPill(ctx, b, label, o = {}) {
+    const { fill = C.button, color = C.text, font = M.btn_font } = o;
+    ctx.fillStyle = C.text_shadow;
+    roundRectPath(ctx, b.x, b.y + S.shadow_dy, b.w, b.h, S.button_radius);
+    ctx.fill();
+    ctx.fillStyle = fill;
+    roundRectPath(ctx, b.x, b.y + dn(b), b.w, b.h, S.button_radius);
+    ctx.fill();
+    drawText(ctx, label, b.x + b.w / 2, b.y + b.h / 2 + dn(b), { font: ui.font, size: font, color, weight: 800, maxWidth: b.w - 40 });
+  }
+
+  function drawPauseButton(ctx) {
+    const b = buttons.pause;
+    const K = P.pause;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2 + dn(b);
+    ctx.fillStyle = C.button;
+    roundRectPath(ctx, cx - K.size / 2, cy - K.size / 2, K.size, K.size, K.radius);
+    ctx.fill();
+    ctx.fillStyle = C.text;
+    const x0 = cx - K.bar_gap / 2 - K.bar_w;
+    const x1 = cx + K.bar_gap / 2;
+    roundRectPath(ctx, x0, cy - K.bar_h / 2, K.bar_w, K.bar_h, K.bar_w / 2);
+    ctx.fill();
+    roundRectPath(ctx, x1, cy - K.bar_h / 2, K.bar_w, K.bar_h, K.bar_w / 2);
+    ctx.fill();
+  }
+
+  // Annuler : jaune tant que la dernière action peut être défaite, avec une barre qui se vide pendant 4 s.
+  function drawUndoButton(ctx) {
+    const b = buttons.undo;
+    const U = P.undo;
+    const u = sim.undoState;
+    const on = !!u && !sim.stroke && !sim.over;
+    ctx.save();
+    if (!on) ctx.globalAlpha = U.disabled_alpha;
+    ctx.fillStyle = on ? C.button_selected : C.button;
+    roundRectPath(ctx, b.x, b.y + dn(b), b.w, b.h, S.button_radius);
+    ctx.fill();
+    drawText(ctx, t("undo.label"), b.x + b.w / 2, b.y + b.h / 2 - 8 + dn(b), {
       font: ui.font,
-      size: S.toggle_font,
-      color: cursorOffset ? C.text_dark : C.text,
+      size: U.font,
+      color: on ? C.text_dark : C.text,
       weight: 800,
-      maxWidth: o.w - 40,
+      maxWidth: b.w - 40,
     });
+    if (on) {
+      const frac = Math.max(0, u.left / u.total);
+      ctx.fillStyle = C.text_dark;
+      ctx.globalAlpha = 0.7;
+      roundRectPath(ctx, b.x + U.bar_inset, b.y + b.h - U.bar_gap - U.bar_h + dn(b), (b.w - 2 * U.bar_inset) * frac, U.bar_h, U.bar_h / 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawButtons(ctx) {
+    drawPauseButton(ctx);
+    drawUndoButton(ctx);
+  }
+
+  // ---------- Écrans par-dessus la partie : pause, reprise, fin ----------
+
+  function drawVeil(ctx) {
+    ctx.fillStyle = M.veil;
+    ctx.fillRect(0, 0, W, layout.height);
+  }
+
+  const titleStyle = (size) => ({ font: ui.font, size, color: C.text, weight: 800, maxWidth: E.title_max_w, shadow: { color: C.text_shadow, dy: S.shadow_dy } });
+
+  function drawPauseMenu(ctx) {
+    drawVeil(ctx);
+    drawText(ctx, t("pause.title"), W / 2, M.title_y, titleStyle(M.title_font));
+    for (const b of menus.paused) {
+      if (b.id === "assist" || b.id === "offset") {
+        const on = b.id === "assist" ? assist : cursorOffset;
+        drawPill(ctx, b, t(b.id === "assist" ? (on ? "opt.assist_on" : "opt.assist_off") : on ? "opt.offset_on" : "opt.offset_off"), {
+          fill: on ? C.button_selected : C.button,
+          color: on ? C.text_dark : C.text,
+          font: M.toggle_font,
+        });
+      } else {
+        const primary = b.id === "resume";
+        drawPill(ctx, b, t(`pause.${b.id}`), { fill: primary ? C.button_selected : C.button, color: primary ? C.text_dark : C.text });
+      }
+    }
+  }
+
+  function drawResumeMenu(ctx) {
+    drawVeil(ctx);
+    drawText(ctx, t("resume.title"), W / 2, M.title_y, titleStyle(M.title_font));
+    drawText(ctx, tn("resume.sub", sim.deliveries, { day: sim.day }), W / 2, M.sub_y, { font: ui.font, size: M.sub_font, color: C.text, weight: 700, maxWidth: E.title_max_w });
+    for (const b of menus.resume) {
+      const primary = b.id === "continue";
+      drawPill(ctx, b, t(primary ? "resume.continue" : "resume.new"), { fill: primary ? C.button_selected : C.button, color: primary ? C.text_dark : C.text });
+    }
+  }
+
+  // Fin de partie : voile, titre, carte avec les livraisons en gros, les journées tenues et le record, deux boutons.
+  function drawEnd(ctx) {
+    drawVeil(ctx);
+    drawText(ctx, t("end.title"), W / 2, E.title_y, titleStyle(E.title_font));
+    ctx.fillStyle = E.card_bg;
+    roundRectPath(ctx, E.card_x, E.card_y, E.card_w, E.card_h, E.card_radius);
+    ctx.fill();
+    const cx = E.card_x + E.card_w / 2;
+    const T0 = E.card_y;
+    drawText(ctx, String(sim.deliveries), cx, T0 + E.big_dy, { font: ui.font, size: E.big_font, color: C.text, weight: 800, shadow: { color: C.text_shadow, dy: S.shadow_dy } });
+    drawText(ctx, tn("end.deliveries_label", sim.deliveries), cx, T0 + E.label_dy, { font: ui.font, size: E.label_font, color: C.text, weight: 700, alpha: 0.85 });
+    drawText(ctx, tn("end.days", sim.daysHeld), cx, T0 + E.days_dy, { font: ui.font, size: E.days_font, color: C.text, weight: 800, maxWidth: E.card_w - 80 });
+    if (endInfo && endInfo.newRecord) {
+      const label = t("end.new_record");
+      ctx.save();
+      ctx.font = `800 ${E.badge_font}px ${ui.font}`;
+      const bw = ctx.measureText(label).width + 2 * E.badge_pad;
+      ctx.restore();
+      ctx.fillStyle = E.badge_color;
+      roundRectPath(ctx, cx - bw / 2, T0 + E.badge_dy - E.badge_h / 2, bw, E.badge_h, E.badge_h / 2);
+      ctx.fill();
+      drawText(ctx, label, cx, T0 + E.badge_dy, { font: ui.font, size: E.badge_font, color: E.badge_text, weight: 800 });
+    } else if (endInfo) {
+      drawText(ctx, t("end.record", { n: endInfo.best }), cx, T0 + E.record_dy, { font: ui.font, size: E.record_font, color: C.text, weight: 700, alpha: 0.8 });
+    }
+    for (const b of menus.end) {
+      const primary = b.id === "replay";
+      drawPill(ctx, b, t(primary ? "end.replay" : "end.back"), { fill: primary ? C.button_selected : C.button, color: primary ? C.text_dark : C.text, font: E.btn_font });
+    }
+  }
+
+  // ---------- Partie : début, pause, sauvegarde, fin ----------
+
+  function resetRuntime() {
+    mistK = 0;
+    assistK = 0;
+    slowCount = 0;
+    finger = null;
+    pressed = null;
+    startedAtDown = false;
+    peek = null;
+    lastDay = sim.day;
+    endInfo = null;
+    bubble = null;
+    tuto = { ...getTuto() };
+    roadCache = { version: -1, chains: [] };
+  }
+
+  function newGame() {
+    sim = createSim(cfg, layout, Date.now() >>> 0); // la graine vient de l'horloge ; tout le reste est déterministe
+    resetRuntime();
+    mode = "play";
+  }
+
+  // Le plan de la partie en cours est gardé à chaque fin de journée, à la pause et en quittant. Les créatures en route
+  // retournent dans la file de leur chaumière à la reprise.
+  function saveNow() {
+    if (!sim || sim.over || mode === "end" || mode === "resume") return;
+    try {
+      setGame(sim.serialize());
+    } catch (err) {
+      console.warn("[save] sauvegarde impossible", err);
+    }
+  }
+
+  function pauseGame() {
+    if (mode !== "play") return;
+    if (sim.stroke) sim.endStroke(false);
+    finger = null;
+    peek = null;
+    mode = "paused";
+    saveNow();
+  }
+
+  function handleEnd() {
+    mode = "end";
+    peek = null;
+    finger = null;
+    clearGame();
+    const prev = recordGame(sim.deliveries, sim.daysHeld);
+    endInfo = { best: Math.max(prev.deliveries, sim.deliveries), newRecord: prev.deliveries > 0 && sim.deliveries > prev.deliveries };
+  }
+
+  function overlayAction(id) {
+    switch (id) {
+      case "resume":
+        mode = "play";
+        break;
+      case "restart":
+      case "newgame":
+        clearGame();
+        newGame();
+        break;
+      case "quit":
+        saveNow();
+        game.goto("title");
+        break;
+      case "assist":
+        assist = !assist;
+        setSetting("assist", assist);
+        break;
+      case "offset":
+        cursorOffset = !cursorOffset;
+        setSetting("cursor_offset", cursorOffset);
+        break;
+      case "continue":
+        mode = "play";
+        break;
+      case "replay":
+        newGame();
+        break;
+      case "back":
+        game.goto("title");
+        break;
+      default:
+    }
   }
 
   return {
     enter() {
-      cursorOffset = !!getSettings().cursor_offset;
-      sim = createSim(cfg, layout, Date.now() >>> 0); // la graine vient de l'horloge ; tout le reste est déterministe
-      mistK = 0;
-      finger = null;
-      pressed = null;
-      startedAtDown = false;
+      const st = getSettings();
+      cursorOffset = !!st.cursor_offset;
+      assist = st.assist !== false;
+      const saved = getGame();
+      if (saved) {
+        try {
+          sim = createSim(cfg, layout, saved.seed, saved);
+          resetRuntime();
+          mode = "resume";
+          return;
+        } catch (err) {
+          console.warn("[save] partie illisible, ignorée", err);
+          clearGame();
+        }
+      }
+      newGame();
+    },
+
+    // Pour les tests dans le navigateur (?debug) : état interne de l'écran.
+    debug: () => ({ sim, mode, tuto, bubble, peek, assistK, endInfo }),
+
+    // Appelé quand l'appli passe en arrière-plan : pause automatique et sauvegarde.
+    hidden() {
+      pauseGame();
     },
 
     update() {
-      sim.step();
+      let slow = false;
+      if (mode === "play") {
+        slow = assist && !!sim.stroke && !!finger;
+        let doStep = true;
+        if (slow) {
+          slowCount = (slowCount + 1) % CF.assist_divisor; // aide au tracé : un pas sur deux, le temps passe à moitié vitesse
+          doStep = slowCount === 0;
+        } else {
+          slowCount = 0;
+        }
+        if (doStep) {
+          sim.step();
+          if (sim.over) handleEnd();
+          else {
+            if (sim.day !== lastDay) {
+              lastDay = sim.day;
+              saveNow(); // fin de journée : point de reprise
+            }
+            updateTutorial();
+          }
+        }
+        const st = sim.stroke;
+        if (finger && st && st.kind === "building" && !st.moved && !st.headId && performance.now() - downAt >= CF.long_press_ms) peek = st.building;
+        else if (!finger || !st || st.moved || st.headId) peek = null;
+      }
+      assistK += ((slow ? 1 : 0) - assistK) * P.assist.ease;
       const target = sim.over ? 1 : sim.panic.active ? 1 - sim.panic.left / sim.panic.total : 0;
       mistK += (target - mistK) * P.mist.ease;
     },
@@ -541,6 +950,7 @@ export function createPlayScreen(game) {
       drawGrass(ctx);
       drawRoads(ctx, tickF);
       for (const s of sim.sites) drawSite(ctx, s, tickF);
+      drawPeekLines(ctx, tickF);
 
       // tête du tracé : anneau sur son extrémité, ou autour du bâtiment de départ avant le premier mouvement
       const s = sim.stroke;
@@ -552,7 +962,7 @@ export function createPlayScreen(game) {
           ctx.beginPath();
           ctx.arc(head.x, head.y, cfg.roads.width_px / 2 + P.head_ring_gap, 0, Math.PI * 2);
           ctx.stroke();
-        } else if (s.building) {
+        } else if (s.building && !peek) {
           ctx.save();
           ctx.globalAlpha = P.start_ring_alpha;
           ctx.beginPath();
@@ -567,6 +977,7 @@ export function createPlayScreen(game) {
       for (const b of sim.buildings) drawBuilding(ctx, b, tickF);
       for (const b of sim.buildings) drawQueue(ctx, b);
       for (const b of sim.buildings) if (b.over) drawPanicRing(ctx, b);
+      drawPeekRings(ctx, tickF);
 
       // petits « +N » qui montent
       for (const p of sim.popups) {
@@ -601,19 +1012,23 @@ export function createPlayScreen(game) {
       }
 
       drawMist(ctx);
+      drawAssist(ctx);
+      drawTutorial(ctx, tickF);
       drawHud(ctx, alpha);
       drawButtons(ctx);
-      if (sim.over) drawEnd(ctx);
+      if (mode === "paused") drawPauseMenu(ctx);
+      else if (mode === "resume") drawResumeMenu(ctx);
+      else if (mode === "end") drawEnd(ctx);
     },
 
     pointer(type, x, y) {
-      if (sim.over) {
-        // fin de partie : seuls les deux boutons répondent
+      if (mode !== "play") {
+        // pause, reprise, fin : seuls les boutons répondent
         if (type === "down") pressed = buttonAt(x, y);
         else if (type !== "move") {
           const b = pressed;
           pressed = null;
-          if (type === "up" && b && inRect(b, x, y)) game.goto(b.id === "replay" ? "play" : "title");
+          if (type === "up" && b && inRect(b, x, y)) overlayAction(b.id);
         }
         return;
       }
@@ -625,6 +1040,7 @@ export function createPlayScreen(game) {
         }
         finger = { x, y };
         downAt = performance.now();
+        peek = null;
         const a = aim(x, y);
         startedAtDown = sim.beginStroke(a.x, a.y);
       } else if (type === "move") {
@@ -642,18 +1058,15 @@ export function createPlayScreen(game) {
           const b = pressed;
           pressed = null;
           if (type === "up" && inRect(b, x, y)) {
-            if (b.id === "back") {
-              game.goto("title");
-            } else {
-              cursorOffset = !cursorOffset;
-              setSetting("cursor_offset", cursorOffset);
-            }
+            if (b.id === "pause") pauseGame();
+            else if (b.id === "undo") sim.undo();
           }
           return;
         }
         const quick = type === "up" && startedAtDown && performance.now() - downAt < cfg.input.tap_max_ms;
         sim.endStroke(quick);
         finger = null;
+        peek = null;
         startedAtDown = false;
       }
     },

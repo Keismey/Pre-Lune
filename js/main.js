@@ -41,6 +41,7 @@ async function boot() {
   game.screens.title = createTitleScreen(game);
   game.screens.play = createPlayScreen(game);
   game.goto("title");
+  if (new URLSearchParams(location.search).has("debug")) window.__game = game; // pour les tests dans le navigateur
 
   createInput(canvas, display, (type, x, y) => game.screen.pointer(type, x, y));
 
@@ -54,9 +55,13 @@ async function boot() {
     }
   );
 
-  // pas de rattrapage du temps perdu au retour d'arrière-plan
+  // pas de rattrapage du temps perdu au retour d'arrière-plan ; l'écran peut se mettre en pause et sauvegarder
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) loop.resetClock();
+    if (document.hidden) {
+      if (game.screen && game.screen.hidden) game.screen.hidden();
+    } else {
+      loop.resetClock();
+    }
   });
 
   document.title = t("game.title");

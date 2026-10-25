@@ -123,7 +123,7 @@ function makeHeap() {
   };
 }
 
-export function createSim(cfg, layout, seed) {
+export function createSim(cfg, layout, seed, saved = null) {
   const { cols, rows, cell } = layout;
   const B = cfg.buildings;
   const R = cfg.roads;
@@ -132,6 +132,7 @@ export function createSim(cfg, layout, seed) {
   const PAN = cfg.panic;
   const TL = cfg.tiles;
   const D = cfg.days;
+  const CF = cfg.comfort;
   const popupLife = cfg.ui.play.popup.life_s;
   const hz = cfg.loop.sim_hz;
   const dt = 1 / hz;
@@ -175,6 +176,9 @@ export function createSim(cfg, layout, seed) {
     dist: {}, // couleur → Map(nœud → distance jusqu'à l'atelier le plus proche)
     stroke: null,
     nextId: 1,
+    seed,
+    undoState: null, // { snap, tilesAfter, left, total } : la dernière action, annulable pendant comfort.undo_s
+    eraseCount: 0, // nombre d'effacements réussis (le tutoriel s'en sert)
   };
 
   let dirty = false; // le réseau a changé : champ de distance à recalculer
@@ -191,11 +195,11 @@ export function createSim(cfg, layout, seed) {
   const ringRect = (b) => rectOf(b, R.door_gap_px); // où se posent les portes
   const captureRect = (b) => rectOf(b, R.capture_px); // où le doigt vise la porte
 
-  function addBuilding(kind, color, c, r) {
+  function addBuilding(kind, color, c, r, id = 0) {
     const q = layout.cellRect(c, r);
     const half = unit / 2;
     const b = {
-      id: sim.nextId++,
+      id: id || sim.nextId++,
       kind,
       color,
       c,
@@ -771,6 +775,7 @@ export function createSim(cfg, layout, seed) {
       if (best) s = { kind: "building", building: best, pending: null, start: { x, y }, moved: false, target: { x, y }, headId: null, stack: [], own: new Set() };
     }
     sim.stroke = s;
+    pendingSnap = s ? takeSnapshot() : null;
     return !!s;
   };
 
@@ -791,8 +796,10 @@ export function createSim(cfg, layout, seed) {
     // une porte créée au départ mais restée sans chemin ne reste pas
     for (const e of s.stack) if (e.nodeNew) pruneNode(e.id);
     flush();
-    if (quick && s.kind === "path" && !s.moved) return sim.eraseAt(s.start.x, s.start.y);
-    return null;
+    let res = null;
+    if (quick && s.kind === "path" && !s.moved) res = sim.eraseAt(s.start.x, s.start.y);
+    commitUndo();
+    return res;
   };
 
   // Tête du tracé en cours (pour l'affichage), ou null.
@@ -834,11 +841,140 @@ export function createSim(cfg, layout, seed) {
     for (const id of touched) pruneNode(id);
     const refund = costOf(len) * TL.refund_ratio;
     sim.tiles += refund;
+    sim.eraseCount++;
     addPopup("tiles", hit.x, hit.y, Math.max(1, Math.round(refund)));
     dropLostCreatures();
     flush();
     return { edges: chain.size, refund };
   };
+
+  // ---------- Annuler (dernière action, comfort.undo_s secondes) ----------
+
+  let pendingSnap = null; // état du réseau avant le geste en cours
+
+  const graphSig = () => `${[...nodes.keys()].sort((m, n) => m - n).join(",")}|${[...edges.keys()].sort((m, n) => m - n).join(",")}`;
+
+  function takeSnapshot() {
+    return {
+      sig: graphSig(),
+      tiles: sim.tiles,
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, placedAt: e.placedAt })),
+    };
+  }
+
+  // Remplace le réseau (les Map restent les mêmes objets) ; les identifiants ne sont jamais réutilisés.
+  function loadGraph(ns, es) {
+    nodes.clear();
+    edges.clear();
+    for (const n of ns) nodes.set(n.id, { id: n.id, x: n.x, y: n.y, door: n.door, adj: [] });
+    for (const e of es) {
+      const a = nodes.get(e.a);
+      const b = nodes.get(e.b);
+      if (!a || !b) continue;
+      edges.set(e.id, { id: e.id, a: e.a, b: e.b, len: Math.hypot(b.x - a.x, b.y - a.y), placedAt: e.placedAt });
+      a.adj.push({ to: b.id, edge: e.id });
+      b.adj.push({ to: a.id, edge: e.id });
+    }
+    dirty = true;
+    sim.graphVersion++;
+  }
+
+  // Fin d'un geste : s'il a changé le réseau, il devient la dernière action annulable.
+  function commitUndo() {
+    const snap = pendingSnap;
+    pendingSnap = null;
+    if (!snap || snap.sig === graphSig()) return;
+    const total = ticks(CF.undo_s);
+    sim.undoState = { snap, tilesAfter: sim.tiles, left: total, total };
+  }
+
+  // Annule la dernière action. Les créatures dont la route a disparu retournent dans la file de leur chaumière.
+  sim.undo = function () {
+    const u = sim.undoState;
+    if (!u || sim.stroke || sim.over) return false;
+    sim.undoState = null;
+    loadGraph(u.snap.nodes, u.snap.edges);
+    sim.tiles += u.snap.tiles - u.tilesAfter; // un gain de fin de journée arrivé entre-temps est conservé
+    dropLostCreatures();
+    flush();
+    return true;
+  };
+
+  // Une chaumière a-t-elle une route vers un atelier de sa couleur ?
+  sim.isConnected = (b) => !!bestDoor(b);
+
+  // ---------- Sauvegarde de partie ----------
+  // Les créatures en route (et celles qui attendent à la porte d'un atelier) retournent dans la file de leur chaumière :
+  // rien ne se perd, rien ne se dédouble. Les gestes en cours et l'annulation ne sont pas sauvegardés.
+
+  sim.serialize = function () {
+    const extra = new Map();
+    const back = (cr) => extra.set(cr.home, (extra.get(cr.home) || 0) + 1);
+    for (const cr of sim.creatures) back(cr);
+    for (const b of sim.buildings) if (b.kind === "workshop") for (const cr of b.queue) back(cr);
+    return {
+      v: 1,
+      seed,
+      tick: sim.tick,
+      day: sim.day,
+      dayTick: sim.dayTick,
+      tiles: sim.tiles,
+      deliveries: sim.deliveries,
+      produced: sim.produced,
+      nextId: sim.nextId,
+      nodeSeq,
+      edgeSeq,
+      rng: Object.fromEntries(Object.entries(streams).map(([k, r]) => [k, r.getState()])),
+      fired: events.map((e) => e.fired),
+      panic: { active: sim.panic.active, left: sim.panic.left },
+      buildings: sim.buildings.map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        color: b.color,
+        c: b.c,
+        r: b.r,
+        timer: b.timer,
+        queue: b.kind === "house" ? b.queue + (extra.get(b.id) || 0) : 0,
+        cool: b.cool,
+        unload: b.unload,
+        over: b.over,
+      })),
+      sites: sim.sites.map((s) => ({ id: s.id, kind: s.kind, color: s.color, c: s.c, r: s.r, left: s.left, total: s.total })),
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b })),
+    };
+  };
+
+  function restoreFrom(d) {
+    sim.tick = d.tick;
+    sim.day = d.day;
+    sim.dayTick = d.dayTick;
+    sim.tiles = d.tiles;
+    sim.deliveries = d.deliveries;
+    sim.produced = d.produced;
+    nodeSeq = d.nodeSeq;
+    edgeSeq = d.edgeSeq;
+    for (const [k, v] of Object.entries(d.rng || {})) if (streams[k]) streams[k].setState(v);
+    if (Array.isArray(d.fired) && d.fired.length === events.length) events.forEach((e, i) => (e.fired = !!d.fired[i]));
+    else for (const e of events) e.fired = e.day < d.day;
+    sim.panic.active = !!d.panic.active;
+    sim.panic.left = d.panic.left;
+    for (const b of d.buildings) {
+      const o = addBuilding(b.kind, b.color, b.c, b.r, b.id);
+      o.timer = b.timer;
+      o.queue = b.kind === "house" ? b.queue : [];
+      o.cool = b.cool;
+      o.unload = b.unload;
+      o.over = !!b.over;
+    }
+    for (const s of d.sites) {
+      const q = layout.cellRect(s.c, s.r);
+      sim.sites.push({ id: s.id, kind: s.kind, color: s.color, c: s.c, r: s.r, x: q.x + unit / 2, y: q.y + unit / 2, left: s.left, total: s.total });
+    }
+    loadGraph(d.nodes, d.edges.map((e) => ({ ...e, placedAt: -1000 })));
+    sim.nextId = d.nextId;
+  }
 
   // ---------- Créatures, files d'attente, croisements ----------
 
@@ -1188,6 +1324,8 @@ export function createSim(cfg, layout, seed) {
       if (sim.gainFx.age >= TL.gain_fx_s) sim.gainFx = null;
     }
 
+    if (sim.undoState && --sim.undoState.left <= 0) sim.undoState = null;
+
     flush();
     buildOcc();
     grantJunctions();
@@ -1223,7 +1361,8 @@ export function createSim(cfg, layout, seed) {
     flush();
   };
 
-  runSchedule(); // les bâtiments prévus à 0 s apparaissent tout de suite, sans chantier
+  if (saved) restoreFrom(saved);
+  else runSchedule(); // les bâtiments prévus à 0 s apparaissent tout de suite, sans chantier
   rebuildDist();
   return sim;
 }

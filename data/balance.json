@@ -1,6 +1,6 @@
 {
   "game": {
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "world": {
     "width": 1080,
@@ -363,8 +363,9 @@
         "label_y": 104,
         "shake_px": 8,
         "shake_hz": 30,
-        "gain_dx": 250,
-        "gain_rise": 40
+        "gain_dx": 210,
+        "gain_rise": 40,
+        "left_pad": 150
       },
       "colors": {
         "tile": "#ecd9a3",
@@ -405,16 +406,121 @@
         "veil": "rgba(26, 14, 48, 0.72)",
         "title_y": 620,
         "title_font": 92,
-        "line_font": 60,
-        "line_gap": 96,
-        "stats_y": 820,
         "btn_w": 420,
         "btn_h": 150,
         "btn_gap": 50,
-        "btn_y": 1180,
+        "btn_y": 1230,
         "btn_font": 58,
-        "title_max_w": 900
+        "title_max_w": 900,
+        "card_x": 120,
+        "card_y": 720,
+        "card_w": 840,
+        "card_h": 430,
+        "card_radius": 44,
+        "card_bg": "rgba(59, 42, 99, 0.94)",
+        "big_font": 170,
+        "big_dy": 120,
+        "label_font": 50,
+        "label_dy": 230,
+        "days_font": 54,
+        "days_dy": 310,
+        "record_font": 44,
+        "record_dy": 376,
+        "badge_color": "#ffd166",
+        "badge_text": "#2a1d4a",
+        "badge_font": 42,
+        "badge_h": 70,
+        "badge_pad": 40,
+        "badge_dy": 376
+      },
+      "pause": {
+        "w": 150,
+        "h": 130,
+        "size": 92,
+        "radius": 26,
+        "bar_w": 14,
+        "bar_h": 44,
+        "bar_gap": 18
+      },
+      "undo": {
+        "w": 330,
+        "font": 48,
+        "bar_h": 10,
+        "bar_inset": 34,
+        "bar_gap": 16,
+        "disabled_alpha": 0.38
+      },
+      "assist": {
+        "tint": "rgba(120, 160, 255, 0.10)",
+        "edge": "rgba(190, 215, 255, 0.55)",
+        "edge_w": 16,
+        "ease": 0.2
+      },
+      "peek": {
+        "ring_r": 0.78,
+        "ring_w": 9,
+        "ring_alpha": 0.95,
+        "pulse_hz": 1.2,
+        "pulse_amp": 0.07,
+        "dash": [
+          22,
+          16
+        ],
+        "line_w": 9,
+        "line_alpha": 0.9,
+        "dash_speed": 70,
+        "outline_extra": 8,
+        "outline_alpha": 0.45
+      },
+      "menu": {
+        "veil": "rgba(26, 14, 48, 0.78)",
+        "title_y": 420,
+        "title_font": 100,
+        "sub_y": 540,
+        "sub_font": 52,
+        "btn_w": 720,
+        "btn_h": 132,
+        "btn_gap": 28,
+        "btn_font": 56,
+        "first_y": 640,
+        "toggle_h": 112,
+        "toggle_font": 44,
+        "section_gap": 50
+      },
+      "tuto": {
+        "y": 275,
+        "w": 900,
+        "pad": 30,
+        "font": 42,
+        "line_h": 1.22,
+        "radius": 34,
+        "bg": "rgba(42, 29, 74, 0.94)",
+        "border": "#ffd166",
+        "warn_border": "#ff6b6b",
+        "border_w": 6,
+        "finger_r": 30,
+        "cycle_s": 2.6,
+        "line_w": 8,
+        "line_alpha": 0.7,
+        "dash": [
+          14,
+          14
+        ],
+        "finger_fill": "rgba(255, 248, 231, 0.92)",
+        "finger_stroke": "#2a1d4a",
+        "y_bottom": 1610,
+        "clear": 24
       }
     }
+  },
+  "comfort": {
+    "undo_s": 4,
+    "assist_divisor": 2,
+    "long_press_ms": 450
+  },
+  "tutorial": {
+    "days": 3,
+    "bubble_s": 9,
+    "mist_bubble_s": 7
   }
 }
