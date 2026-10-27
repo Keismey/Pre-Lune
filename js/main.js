@@ -8,6 +8,7 @@ import { startLoop } from "./loop.js";
 import { createLayout } from "./world.js";
 import { createTitleScreen } from "./screens/title.js";
 import { createPlayScreen } from "./screens/play.js";
+import { loadAssets } from "./assets.js";
 
 async function loadJson(path) {
   const res = await fetch(path);
@@ -17,7 +18,7 @@ async function loadJson(path) {
 
 async function boot() {
   const canvas = document.getElementById("game");
-  const [cfg] = await Promise.all([loadJson("data/balance.json"), loadLangs()]);
+  const [cfg, , assets] = await Promise.all([loadJson("data/balance.json"), loadLangs(), loadAssets()]);
 
   loadSave();
   const saved = getSettings().lang;
@@ -27,7 +28,7 @@ async function boot() {
   display.background = cfg.ui.colors.letterbox;
   const layout = createLayout(cfg.world);
 
-  const game = { cfg, display, layout, screen: null, screens: {} };
+  const game = { cfg, display, layout, assets, screen: null, screens: {} };
 
   game.goto = (name) => {
     game.screen = game.screens[name];

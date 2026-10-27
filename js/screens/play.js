@@ -9,9 +9,10 @@ import { getSettings, setSetting, getGame, setGame, clearGame, getTuto, setTuto,
 import { createSim } from "../sim.js";
 import { createRng } from "../rng.js";
 import { drawText, roundRectPath, wrapLines } from "../draw.js";
+import { drawSprite, drawSymbol, makeGrassPattern, makePathPattern } from "../assets.js";
 
 export function createPlayScreen(game) {
-  const { cfg, layout } = game;
+  const { cfg, layout, assets } = game;
   const ui = cfg.ui;
   const S = ui.sizes;
   const C = ui.colors;
@@ -19,6 +20,7 @@ export function createPlayScreen(game) {
   const PC = P.colors;
   const H = P.hud;
   const CRT = P.creature;
+  const SP = P.sprites;
   const CF = cfg.comfort;
   const TU = cfg.tutorial;
   const M = P.menu;
@@ -106,7 +108,29 @@ export function createPlayScreen(game) {
     return cv;
   })();
 
-  const drawGrass = (ctx) => ctx.drawImage(grass, layout.gridX, layout.gridY);
+  // Textures d'herbe et de chemin (images) : créées au premier dessin, avec repli sur l'herbe dessinée et les dalles unies.
+  let grassPat = null;
+  let pathPat = null;
+  let patternsReady = false;
+  function ensurePatterns(ctx) {
+    if (patternsReady) return;
+    patternsReady = true;
+    grassPat = makeGrassPattern(ctx, assets, SP.grass_tile_px, SP.grass_mirror);
+    pathPat = makePathPattern(ctx, assets, SP.path_tile_px);
+  }
+
+  function drawGrass(ctx) {
+    ensurePatterns(ctx);
+    if (!grassPat) {
+      ctx.drawImage(grass, layout.gridX, layout.gridY);
+      return;
+    }
+    ctx.save();
+    ctx.translate(layout.gridX, layout.gridY);
+    ctx.fillStyle = grassPat;
+    ctx.fillRect(0, 0, layout.gridW, layout.gridH);
+    ctx.restore();
+  }
 
   // Les chemins sont découpés en chaînes (entre deux croisements, bouts ou portes), redessinées en courbes lissées.
   // Le découpage est mis en cache tant que le réseau ne change pas.
@@ -176,7 +200,7 @@ export function createPlayScreen(game) {
       chainPath(ctx, pts);
       ctx.stroke();
     }
-    ctx.strokeStyle = PC.tile;
+    ctx.strokeStyle = pathPat || PC.tile;
     ctx.lineWidth = W0 - 2 * P.tile_inset;
     for (const pts of roadCache.chains) {
       chainPath(ctx, pts);
@@ -189,7 +213,7 @@ export function createPlayScreen(game) {
       const a = sim.nodes.get(e.a);
       const b = sim.nodes.get(e.b);
       const k = 1 + P.bounce_amp * Math.sin((Math.PI * age) / P.bounce_ticks);
-      ctx.strokeStyle = PC.tile;
+      ctx.strokeStyle = pathPat || PC.tile;
       ctx.lineWidth = (W0 - 2 * P.tile_inset) * k;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -255,6 +279,24 @@ export function createPlayScreen(game) {
     ctx.restore();
   }
 
+  // Bâtiment en image (chaumière ou atelier) avec son symbole de couleur sur le toit. Faux si l'image manque.
+  function drawBuildingSprite(ctx, b) {
+    if (!assets) return false;
+    const key = `${b.kind === "house" ? "house" : "work"}.${b.color}`;
+    const spr = assets.spec.sprites[key];
+    if (!spr) return false;
+    const k = (unit * SP.building_w_units) / assets.spec.ref_house_w;
+    const y = b.y + SP.building_dy;
+    drawSprite(ctx, assets, key, b.x, y, k);
+    const Y = SP.symbol;
+    const [bx0, by0, bx1, by1] = spr.body;
+    const sx = b.x + ((bx0 + bx1) / 2 - spr.ax + Y.roof_dx * (bx1 - bx0)) * k;
+    const sy = y + (by0 + Y.roof_y * (by1 - by0) - spr.ay) * k;
+    const pal = cfg.palette[b.color];
+    drawSymbol(ctx, Y.shapes[b.color], sx, sy, (b.kind === "house" ? Y.house_r : Y.work_r) * unit, pal ? pal.light : Y.fill, pal ? pal.dark : C.text_dark, Y.outline_w);
+    return true;
+  }
+
   function drawBuilding(ctx, b, tickF) {
     const pal = cfg.palette[b.color];
     const u = unit;
@@ -268,12 +310,17 @@ export function createPlayScreen(game) {
     ctx.scale(scale, scale);
     ctx.translate(-b.x, -b.y);
 
-    ctx.fillStyle = PC.shadow;
-    ctx.beginPath();
-    ctx.ellipse(b.x, b.y + 0.42 * u, 0.46 * u, 0.12 * u, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const sprited = drawBuildingSprite(ctx, b);
+    if (!sprited) {
+      ctx.fillStyle = PC.shadow;
+      ctx.beginPath();
+      ctx.ellipse(b.x, b.y + 0.42 * u, 0.46 * u, 0.12 * u, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-    if (b.kind === "house") {
+    if (sprited) {
+      // l'image porte déjà son jardin et son ombre ; formes simples seulement en repli
+    } else if (b.kind === "house") {
       ctx.fillStyle = pal.main;
       roundRectPath(ctx, b.x - 0.36 * u, b.y - 0.02 * u, 0.72 * u, 0.46 * u, 0.06 * u);
       ctx.fill();
@@ -377,11 +424,68 @@ export function createPlayScreen(game) {
     ctx.restore();
   }
 
+  // État d'animation des créatures (affichage seulement, la simulation n'en dépend pas) : cap lissé et phase de marche,
+  // mis à jour à chaque pas de simulation puis interpolés au rendu.
+  const walkers = new Map(); // id de créature -> { a0, a1 (cap, rad), ph0, ph1 (phase de marche, en foulées) }
+
+  function updateWalkers() {
+    const alive = new Set();
+    for (const cr of sim.creatures) {
+      alive.add(cr.id);
+      const target = Math.atan2(cr.dy, cr.dx) + Math.PI / 2; // l'image a la tête vers le haut
+      let w = walkers.get(cr.id);
+      if (!w) {
+        w = { a0: target, a1: target, ph0: 0, ph1: 0 };
+        walkers.set(cr.id, w);
+      }
+      w.a0 = w.a1;
+      w.ph0 = w.ph1;
+      if (cr.dx || cr.dy) {
+        const d = target - w.a1;
+        w.a1 += Math.atan2(Math.sin(d), Math.cos(d)) * SP.turn_ease; // virage par le plus court côté
+      }
+      w.ph1 += Math.hypot(cr.x - cr.px, cr.y - cr.py) / SP.stride_px;
+    }
+    for (const id of walkers.keys()) if (!alive.has(id)) walkers.delete(id);
+  }
+
+  // Créature en image : tournée selon son cap, léger balancement et rebond en marchant, symbole de couleur sur le dos.
+  function drawCreatureSprite(ctx, cr, x, y, pop, alpha) {
+    const key = `crea.${cr.color}`;
+    const spr = assets && assets.spec.sprites[key];
+    if (!spr) return false;
+    const w = walkers.get(cr.id);
+    const ang = w ? w.a0 + (w.a1 - w.a0) * alpha : Math.atan2(cr.dy, cr.dx) + Math.PI / 2;
+    const ph = w ? w.ph0 + (w.ph1 - w.ph0) * alpha : 0;
+    const wob = Math.sin(ph * Math.PI * 2) * ((SP.wobble_deg * Math.PI) / 180);
+    const bob = 1 + SP.bob * Math.sin(ph * Math.PI * 4);
+    const H = SP.creature_h * cr.size * pop;
+    const s = H / (2 * CRT.radius);
+    ctx.save();
+    ctx.globalAlpha = SP.shadow_alpha;
+    ctx.fillStyle = PC.shadow;
+    ctx.beginPath();
+    ctx.ellipse(x, y + CRT.shadow_dy * s, CRT.shadow_rx * s, CRT.shadow_ry * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(ang + wob);
+    ctx.scale(bob, bob);
+    drawSprite(ctx, assets, key, 0, 0, H / spr.h);
+    const Y = SP.symbol;
+    const pal = cfg.palette[cr.color];
+    drawSymbol(ctx, Y.shapes[cr.color], 0, Y.creature_dy * H, Y.creature_r * H, pal ? pal.light : Y.fill, pal ? pal.dark : C.text_dark, Y.outline_w * 0.6);
+    ctx.restore();
+    return true;
+  }
+
   function drawCreature(ctx, cr, alpha) {
     const pal = cfg.palette[cr.color];
     const x = cr.px + (cr.x - cr.px) * alpha;
     const y = cr.py + (cr.y - cr.py) * alpha;
     const pop = Math.min(1, cr.age / CRT.pop_in_s);
+    if (drawCreatureSprite(ctx, cr, x, y, pop, alpha)) return;
     const rad = CRT.radius * pop;
     ctx.fillStyle = PC.shadow;
     ctx.beginPath();
@@ -812,6 +916,7 @@ export function createPlayScreen(game) {
     bubble = null;
     tuto = { ...getTuto() };
     roadCache = { version: -1, chains: [] };
+    walkers.clear();
   }
 
   function newGame() {
@@ -925,6 +1030,7 @@ export function createPlayScreen(game) {
         }
         if (doStep) {
           sim.step();
+          updateWalkers();
           if (sim.over) handleEnd();
           else {
             if (sim.day !== lastDay) {

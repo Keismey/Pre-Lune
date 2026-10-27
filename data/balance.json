@@ -1,6 +1,6 @@
 {
   "game": {
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "world": {
     "width": 1080,
@@ -306,6 +306,37 @@
         "shadow_rx": 20,
         "shadow_ry": 7,
         "pop_in_s": 0.2
+      },
+      "sprites": {
+        "building_w_units": 1.15,
+        "building_dy": 0,
+        "creature_h": 50,
+        "turn_ease": 0.3,
+        "wobble_deg": 5,
+        "bob": 0.04,
+        "stride_px": 44,
+        "shadow_alpha": 1,
+        "grass_tile_px": 256,
+        "grass_mirror": false,
+        "path_tile_px": 102,
+        "symbol": {
+          "house_r": 0.125,
+          "work_r": 0.125,
+          "roof_y": 0.36,
+          "roof_dx": -0.04,
+          "creature_r": 0.14,
+          "creature_dy": 0.2,
+          "fill": "#fff8e7",
+          "outline_w": 4,
+          "shapes": {
+            "blue": "circle",
+            "red": "triangle",
+            "yellow": "square",
+            "green": "diamond",
+            "purple": "star",
+            "orange": "hexagon"
+          }
+        }
       },
       "popup": {
         "life_s": 0.9,
