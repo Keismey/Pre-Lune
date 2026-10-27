@@ -24,6 +24,7 @@ Chaque couleur a aussi un symbole dessiné sur le toit de la chaumière, l'ateli
 
 - **Chaumière :** fabrique les créatures de sa couleur, affiche l'anneau de 10 pastilles de sa file d'attente.
 - **Atelier :** reçoit les créatures de sa couleur, une toutes les 0,8 s, et fait tinter une clochette à chaque livraison.
+- **Lisibilité :** la couleur relie la chaumière à son atelier, le design les distingue. Chaumière : petite, toit en pente, cheminée qui fume, jardin d'herbe. Atelier : environ 1,3 fois plus grand, large et bas, sans toit de chaumière, sur un socle de pavés, avec un grand objet emblématique (détail dans `04-audio-assets.md`).
 - **Chantier :** panneau et poussière 4 s avant l'apparition, avec la couleur du futur bâtiment.
 - **Obstacles :** arbres, rochers, buissons, eau, montagnes : infranchissables sans pont ou tunnel.
 

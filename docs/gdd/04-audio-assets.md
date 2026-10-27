@@ -55,28 +55,37 @@ Illustration 2D de jeu mobile en vue de dessus (top-down), style cartoon vectori
 
 Chaque prompt ci-dessous se colle **après** ce style commun (sur la page du GDD, le bouton « Copier le prompt » l'ajoutait tout seul).
 
+**Règle de lisibilité chaumière / atelier (planches 1 à 4).** La **couleur** relie une chaumière à son atelier (même couleur dominante, très saturée, identique sur les deux planches : à joindre en image de référence dans Gemini pour garder la même teinte) ; le **design** les distingue au premier coup d'œil, même à 40 px.
+
+| | Chaumière | Atelier |
+|---|---|---|
+| Silhouette | petite, presque carrée, toit en pente à deux pans | environ 1,3 fois plus grand, large et bas, jamais de toit de chaumière |
+| Sol | jardin d'herbe avec fleurs | socle carré de pavés beiges, sans herbe |
+| Cheminée | petite cheminée en briques qui fume | pas de cheminée qui fume (seule la forge a une énorme cheminée à flammes) |
+| Repère | porte ronde, aspect douillet | un grand objet emblématique bien visible (lanterne, enclume, dôme de ruche, dôme d'observatoire, marmite) |
+
 ### Planche 1 : chaumières bleue, rouge, jaune (3)
 
 ```
-Planche sur fond uni clair, 3 petites chaumières de conte de fées vues de dessus, grille 1x3, même taille et mêmes proportions, silhouette presque carrée lisible à petite taille : un toit rond bleu, un toit rouge, un toit jaune, cheminée fumante et petit jardin.
+Planche sur fond uni clair, 3 petites chaumières de conte de fées vues de dessus, grille 1x3, même taille et mêmes proportions, silhouette presque carrée lisible à petite taille. Chaque chaumière a un toit en pente à deux pans, entièrement d'une seule couleur très saturée (un toit bleu en tuiles rondes, un toit rouge en tuiles, un toit jaune de chaume), une petite cheminée en briques qui fume, une porte ronde en bois, et un petit jardin d'herbe avec quelques fleurs et un buisson. Aspect douillet et habité : c'est une maison, pas un atelier. Aucun grand objet, aucun outil.
 ```
 
 ### Planche 2 : chaumières verte, violette, orange (3)
 
 ```
-Même cadrage et même style que la planche précédente : 3 chaumières en grille 1x3, un toit de mousse verte, un toit violet, un toit orange.
+Même cadrage, même style et mêmes règles que la planche précédente (grille 1x3, maisons douillettes à toit en pente, cheminée qui fume, porte ronde, jardin d'herbe) : un toit de mousse verte, un toit violet en tuiles, un toit orange de chaume.
 ```
 
 ### Planche 3 : ateliers bleu, rouge, jaune (3)
 
 ```
-Planche sur fond uni clair, 3 ateliers vus de dessus, grille 1x3, silhouette presque carrée, un peu plus grands que les chaumières : une lanternerie avec des lanternes suspendues (bleu), une forge avec une cheminée rougeoyante (rouge), une miellerie avec des ruches (jaune).
+Planche sur fond uni clair, 3 ateliers vus de dessus, grille 1x3, même taille entre eux, environ 1,3 fois plus grands que des chaumières, silhouette large et basse, chacun posé sur un socle carré de pavés beiges (pas d'herbe). Ils ne doivent surtout pas ressembler à des maisons : pas de toit de chaumière en pente, pas de petite cheminée qui fume. Chacun a une couleur dominante très saturée portée par son auvent, son toit ou son dôme, et un grand objet emblématique bien visible : 1) la lanternerie (bleu) : un pavillon ouvert sous un auvent bleu rayé, avec une énorme lanterne lumineuse sur le faîte et des guirlandes de lanternes ; 2) la forge (rouge) : un bâtiment trapu en pierre sombre à toit plat rouge, avec une énorme cheminée de pierre qui crache des flammes et des étincelles, et une grande enclume devant ; 3) la miellerie (jaune) : un grand dôme en forme de ruche jaune rayée de miel, avec des tonneaux de miel et quelques abeilles.
 ```
 
 ### Planche 4 : ateliers vert, violet, orange (3)
 
 ```
-Même cadrage que la planche précédente, grille 1x3 : une serre en verre pleine de plantes (vert), un observatoire avec un dôme et une lunette (violet), une grosse marmite fumante sous un auvent (orange).
+Même cadrage et mêmes règles que la planche précédente (grille 1x3, environ 1,3 fois plus grands que des chaumières, silhouette large et basse, socle carré de pavés beiges sans herbe, jamais de toit de maison ni de petite cheminée qui fume) : 1) la serre (vert) : une grande serre en verre à ossature verte pleine de plantes ; 2) l'observatoire (violet) : une tour ronde à grand dôme violet ouvert avec une grande lunette dorée ; 3) la marmite (orange) : un auvent à toit orange abritant une énorme marmite noire fumante sur un feu.
 ```
 
 ### Planche 5 : créatures bleue, rouge, jaune (3)
