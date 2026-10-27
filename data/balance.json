@@ -315,7 +315,16 @@
         "wobble_deg": 5,
         "bob": 0.04,
         "stride_px": 44,
-        "shadow_alpha": 1,
+        "depth_front": 0.3,
+        "shadow": {
+          "color": "20, 10, 40",
+          "alpha": 0.6,
+          "rx": 0.66,
+          "ry": 0.52,
+          "dx": 0.1,
+          "dy": 0.2,
+          "stops": [[0, 1], [0.3, 0.8], [0.55, 0.42], [0.8, 0.12], [1, 0]]
+        },
         "grass_tile_px": 256,
         "grass_mirror": false,
         "path_tile_px": 102,

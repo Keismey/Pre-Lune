@@ -449,6 +449,32 @@ export function createPlayScreen(game) {
     for (const id of walkers.keys()) if (!alive.has(id)) walkers.delete(id);
   }
 
+  // Ombre douce : un dégradé radial (opaque au centre, transparent au bord) préparé une fois, étiré en ellipse sous la créature.
+  let shadowImg = null;
+  function softShadowImage() {
+    if (shadowImg) return shadowImg;
+    const n = 64;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = n;
+    const g = cv.getContext("2d");
+    const grad = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    for (const [at, a] of SP.shadow.stops) grad.addColorStop(at, `rgba(${SP.shadow.color}, ${a})`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, n, n);
+    shadowImg = cv;
+    return cv;
+  }
+
+  function drawSoftShadow(ctx, x, y, H) {
+    const D = SP.shadow;
+    const rx = D.rx * H;
+    const ry = D.ry * H;
+    ctx.save();
+    ctx.globalAlpha = D.alpha;
+    ctx.drawImage(softShadowImage(), x + D.dx * H - rx, y + D.dy * H - ry, 2 * rx, 2 * ry);
+    ctx.restore();
+  }
+
   // Créature en image : tournée selon son cap, léger balancement et rebond en marchant, symbole de couleur sur le dos.
   function drawCreatureSprite(ctx, cr, x, y, pop, alpha) {
     const key = `crea.${cr.color}`;
@@ -460,14 +486,7 @@ export function createPlayScreen(game) {
     const wob = Math.sin(ph * Math.PI * 2) * ((SP.wobble_deg * Math.PI) / 180);
     const bob = 1 + SP.bob * Math.sin(ph * Math.PI * 4);
     const H = SP.creature_h * cr.size * pop;
-    const s = H / (2 * CRT.radius);
-    ctx.save();
-    ctx.globalAlpha = SP.shadow_alpha;
-    ctx.fillStyle = PC.shadow;
-    ctx.beginPath();
-    ctx.ellipse(x, y + CRT.shadow_dy * s, CRT.shadow_rx * s, CRT.shadow_ry * s, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    drawSoftShadow(ctx, x, y, H);
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(ang + wob);
@@ -1078,9 +1097,16 @@ export function createPlayScreen(game) {
         }
       }
 
-      // créatures sous les bâtiments : elles sortent de la chaumière et entrent dans l'atelier
-      for (const cr of sim.creatures) drawCreature(ctx, cr, alpha);
-      for (const b of sim.buildings) drawBuilding(ctx, b, tickF);
+      // Perspective : bâtiments et créatures sont dessinés du plus au nord au plus au sud. Une créature derrière un
+      // bâtiment (ou à son côté, ou qui y entre) passe sous son toit et ses murs ; devant, elle marche sur le terrain.
+      const order = [];
+      for (const b of sim.buildings) order.push({ y: b.y + SP.depth_front * unit, b, cr: null });
+      for (const cr of sim.creatures) order.push({ y: cr.py + (cr.y - cr.py) * alpha, b: null, cr });
+      order.sort((p, q) => p.y - q.y);
+      for (const o of order) {
+        if (o.b) drawBuilding(ctx, o.b, tickF);
+        else drawCreature(ctx, o.cr, alpha);
+      }
       for (const b of sim.buildings) drawQueue(ctx, b);
       for (const b of sim.buildings) if (b.over) drawPanicRing(ctx, b);
       drawPeekRings(ctx, tickF);
