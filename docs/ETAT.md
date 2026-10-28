@@ -115,6 +115,13 @@ Autres changements, identifiants liés au nom :
 
 Sections `game` (version), `world` (dimensions du GDD), `loop` (`sim_hz` 30, `max_fps` 60, `fps_tolerance_ms` 2, `max_frame_ms` 250), `display` (`dpr_max` 2) et `ui` (couleurs, tailles et réglages de l'écran titre, tous provisoires en attendant les images). Les textes sont dans `lang/`. Boutons de 240 × 140 en monde logique (environ 51 px à l'écran sur un téléphone de 393 px de large, au-dessus des 48 px du GDD).
 
+## Nouvelles planches de bâtiments (28 oct. 2026)
+
+- Nicolas a renvoyé 4 planches (chaumières bleue/rouge/jaune, verte/violette/orange ; ateliers lanterne, forge, ruche, serre, observatoire, chaudron). `tools/decoupe_assets.py` relancé (dossier de planches : `planche1.jpg` à `planche6.jpg`, `herbe.jpg`, `chemin.jpg`) ; `img/buildings.webp` et `data/sprites.json` régénérés (créatures et textures inchangées).
+- Script : le fond des planches a un dégradé, il est maintenant modélisé localement (`bg_model`) ; la fumée est une nuée opaque cernée de noir, donc plus de bande de fumée à alpha doux (`SMOKE_Y` supprimé) ni de filtre « pâle » ; le fond est retiré par remplissage depuis les bords (le verre de la serre et l'intérieur des nuages restent). `BUILDING_SCALE` 0,4 (jardin d'environ 160 px dans l'atlas). Ancrage : milieu du corps en largeur, au sol (bas du corps moins `ANCHOR_UP` 0,58 fois la largeur), car la hauteur varie beaucoup avec la fumée et les étincelles.
+- Jeu : une seule échelle pour les deux types (`building_w_units` 1,15 : les socles d'ateliers ont la même emprise que les jardins). Nouveau dans `ui.play.sprites.symbol` : `work_roof_y` (position verticale du symbole par couleur d'atelier, fraction du corps) et `work_roof_dx` 0. Atelier orange (fumée noire) et rouge (étincelles) plus hauts à l'écran : normal.
+- Reste à regarder en vrai : le chevauchement d'un atelier haut sur la ligne du dessus.
+
 ## Valeurs ajoutées dans `data/balance.json` (I1 et I2)
 
 `ui.play.sprites` (nouveau) : `building_w_units` 1,15 (largeur du jardin en cases de bâtiment, soit 124 px), `building_dy` 0, `creature_h` 50, `turn_ease` 0,3, `wobble_deg` 5, `bob` 0,04, `stride_px` 44, `shadow_alpha` 1, `grass_tile_px` 256, `grass_mirror` faux (vrai : tuile posée en 2 × 2 miroirs, donne un motif en losange trop visible), `path_tile_px` 102, et `symbol` : `house_r` et `work_r` 0,125, `roof_y` 0,36 et `roof_dx` -0,04 (position sur le toit, en fraction du corps du bâtiment), `creature_r` 0,14, `creature_dy` 0,2, `fill` crème (repli), `outline_w` 4, `shapes` (couleur -> forme). `data/sprites.json` (généré) : atlas, position, ancrage et boîte du corps de chaque sprite, `ref_house_w` (largeur de référence d'un jardin de chaumière). `game.version` 0.5.1. Inchangés mais devenus inutiles quand l'image est là : `ui.play.grass`, `ui.play.creature.radius` (sert encore au repli et à l'échelle de l'ombre).
@@ -170,6 +177,13 @@ Sections `game` (version), `world` (dimensions du GDD), `loop` (`sim_hz` 30, `ma
 ## Prochaine conversation du plan
 
 **C6 : cadeaux** (I1 et I2 sont faites). Pas de refonte du trafic pour l'instant (voir « Reste à faire »). Lire `docs/ETAT.md` et les fichiers `docs/gdd/` cités dans le prompt.
+
+## À tester sur le téléphone (nouvelles planches)
+
+1. Recharge sans cache `https://keismey.github.io/Pre-Lune/` : chaumière et atelier bleus (la lanterne) bien différents l'un de l'autre.
+2. À mesure que les couleurs arrivent, vérifie que tu distingues du premier coup d'œil chaumière et atelier de même couleur, et que le symbole sur le toit reste lisible (surtout serre verte et ruche jaune).
+3. Regarde les ateliers hauts (forge rouge avec ses étincelles, chaudron orange avec sa fumée noire) : gênent-ils le bâtiment ou le tracé au-dessus ?
+4. Les créatures passent toujours devant ou derrière selon le côté d'où elles arrivent.
 
 ## À tester sur le téléphone (I1 et I2)
 

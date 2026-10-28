@@ -333,6 +333,8 @@
           "work_r": 0.125,
           "roof_y": 0.36,
           "roof_dx": -0.04,
+          "work_roof_y": { "blue": 0.52, "red": 0.5, "yellow": 0.42, "green": 0.42, "purple": 0.4, "orange": 0.5 },
+          "work_roof_dx": 0,
           "creature_r": 0.14,
           "creature_dy": 0.2,
           "fill": "#fff8e7",

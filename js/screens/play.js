@@ -290,8 +290,11 @@ export function createPlayScreen(game) {
     drawSprite(ctx, assets, key, b.x, y, k);
     const Y = SP.symbol;
     const [bx0, by0, bx1, by1] = spr.body;
-    const sx = b.x + ((bx0 + bx1) / 2 - spr.ax + Y.roof_dx * (bx1 - bx0)) * k;
-    const sy = y + (by0 + Y.roof_y * (by1 - by0) - spr.ay) * k;
+    const work = b.kind !== "house";
+    const roofY = work ? Y.work_roof_y[b.color] : Y.roof_y;
+    const roofDx = work ? Y.work_roof_dx : Y.roof_dx;
+    const sx = b.x + ((bx0 + bx1) / 2 - spr.ax + roofDx * (bx1 - bx0)) * k;
+    const sy = y + (by0 + roofY * (by1 - by0) - spr.ay) * k;
     const pal = cfg.palette[b.color];
     drawSymbol(ctx, Y.shapes[b.color], sx, sy, (b.kind === "house" ? Y.house_r : Y.work_r) * unit, pal ? pal.light : Y.fill, pal ? pal.dark : C.text_dark, Y.outline_w);
     return true;

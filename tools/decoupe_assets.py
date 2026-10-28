@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Découpe des planches Gemini (lot A et B : chaumières, ateliers, créatures, herbe, chemin).
+"""Découpe des planches Gemini (lots A et B : chaumières, ateliers, créatures, herbe, chemin).
 
 Usage : python3 tools/decoupe_assets.py DOSSIER_DES_PLANCHES [DOSSIER_DU_DEPOT]
+
+Le dossier contient planche1.jpg à planche6.jpg (numéros du GDD, section Assets) + herbe.jpg + chemin.jpg.
 
 Produit :
   img/buildings.webp   atlas des 12 bâtiments (6 chaumières, 6 ateliers), fond transparent
   img/creatures.webp   atlas des 6 créatures, fond ET socle d'herbe retirés
-  img/grass.webp       tuile d'herbe sans couture (256 px, dessinée en 2 x 2 miroirs par le jeu)
+  img/grass.webp       tuile d'herbe sans couture (256 px)
   img/path.webp        tuile de chemin sans couture (128 px)
   data/sprites.json    découpe : position de chaque sprite dans l'atlas + point d'ancrage
 
-Les planches sont retrouvées par leur nom de fichier (voir SHEETS). Rien n'est tiré au hasard : le script est déterministe.
+Le fond des planches a un léger dégradé : il est modélisé localement (bg_model), pas par une couleur unique.
+Rien n'est tiré au hasard : le script est déterministe.
 """
 import json
 import os
@@ -24,30 +27,22 @@ COLORS = ["blue", "red", "yellow", "green", "purple", "orange"]
 
 # fichier de planche -> (rôle, couleurs de gauche à droite)
 SHEETS = {
-    "1001964890.jpg": ("house", ["blue", "red", "yellow"]),
-    "1001964895.jpg": ("house", ["green", "purple", "orange"]),
-    "1001964896.jpg": ("work", ["blue", "red", "yellow"]),
-    "1001964897.jpg": ("work", ["green", "purple", "orange"]),
-    "1001964898.jpg": ("crea", ["blue", "red", "yellow"]),
-    "1001964899.jpg": ("crea", ["green", "purple", "orange"]),
+    "planche1.jpg": ("house", ["blue", "red", "yellow"]),
+    "planche2.jpg": ("house", ["green", "purple", "orange"]),
+    "planche3.jpg": ("work", ["blue", "red", "yellow"]),
+    "planche4.jpg": ("work", ["green", "purple", "orange"]),
+    "planche5.jpg": ("crea", ["blue", "red", "yellow"]),
+    "planche6.jpg": ("crea", ["green", "purple", "orange"]),
 }
-GRASS_FILE = "1001964900.jpg"
-PATH_FILE = "1001964901.jpg"
+GRASS_FILE = "herbe.jpg"
+PATH_FILE = "chemin.jpg"
 
-BUILDING_SCALE = 0.5  # planche (px) -> atlas (px) ; 258 px de jardin sur la planche = 129 px
+ANCHOR_UP = 0.58  # hauteur du point d'ancrage au-dessus du bas du bâtiment, en largeur du corps
+BUILDING_SCALE = 0.4  # planche (px) -> atlas (px) ; environ 380 px de jardin sur la planche = 152 px
 CREATURE_SCALE = 0.40
 PAD = 12  # marge ajoutée autour d'un sprite pendant le calcul
 GAP = 4  # espace entre sprites dans l'atlas
 
-# Hauteur (dans la planche) du haut de la cheminée : au-dessus, la fumée est translucide et garde un alpha doux.
-# Bâtiments sans cheminée : None.
-SMOKE_Y = {
-    ("house", "blue"): 252, ("house", "red"): 250, ("house", "yellow"): 256,
-    ("house", "green"): 252, ("house", "purple"): 250, ("house", "orange"): 256,
-    ("work", "blue"): 252, ("work", "red"): 248, ("work", "yellow"): 256,
-}
-SMOKE_D = 82.0  # distance au fond du cœur de la fumée (mesurée : 80 à 83 au 99e centile)
-SMOKE_ALPHA = 0.85
 # Zone de la planche où la croûte d'herbe de la créature peut être retirée par la couleur (le golem a de la mousse
 # partout : on borne le retrait au socle). (x0, y0, x1, y1) en pixels de planche, None = partout.
 PATCH_ZONE = {"green": (150, 300, 415, 535)}
@@ -57,9 +52,22 @@ def load(path):
     return np.array(Image.open(path).convert("RGB")).astype(np.float32)
 
 
-def find_sprites(im):
+def bg_model(im):
+    """Fond de la planche, pixel par pixel : moyenne locale des pixels de fond (le fond a un dégradé de 20 niveaux)."""
+    med = np.median(np.concatenate([im[:20].reshape(-1, 3), im[-20:].reshape(-1, 3)]), axis=0)
+    mask = np.sqrt(((im - med) ** 2).sum(2)) < 45
+    bg = np.empty_like(im)
+    for _ in range(3):
+        w = ndi.gaussian_filter(mask.astype(np.float32), 40)
+        for c in range(3):
+            bg[..., c] = ndi.gaussian_filter(im[..., c] * mask, 40) / np.maximum(w, 1e-3)
+        bg[w < 0.02] = med  # loin de tout fond (cœur d'un sprite) : sans importance
+        mask = np.sqrt(((im - bg) ** 2).sum(2)) < 24
+    return bg
+
+
+def find_sprites(im, bg):
     """3 sprites par planche, de gauche à droite : boîtes (x0, y0, x1, y1)."""
-    bg = np.median(np.concatenate([im[:20].reshape(-1, 3), im[-20:].reshape(-1, 3)]), axis=0)
     d = np.sqrt(((im - bg) ** 2).sum(2))
     fg = ndi.binary_opening(ndi.binary_closing(d > 28, iterations=6), iterations=2)
     lab, n = ndi.label(fg)
@@ -70,19 +78,16 @@ def find_sprites(im):
             boxes.append((o[1].start, o[0].start, o[1].stop, o[0].stop))
     boxes.sort()
     assert len(boxes) == 3, f"3 sprites attendus, {len(boxes)} trouvés"
-    return boxes, bg
+    return boxes
 
 
-def padded_crop(im, box, bg, grow=8):
-    """Découpe élargie de `grow` px (le fond de la planche entoure chaque sprite) + marge de fond uni."""
+def padded_crop(im, bgm, box, grow=8):
+    """Découpe élargie de `grow` px (le fond de la planche entoure chaque sprite) + marge de fond (modèle de fond)."""
     x0, y0, x1, y1 = box
     x0, y0 = max(0, x0 - grow), max(0, y0 - grow)
     x1, y1 = min(im.shape[1], x1 + grow), min(im.shape[0], y1 + grow)
-    crop = im[y0:y1, x0:x1]
-    out = np.empty((crop.shape[0] + 2 * PAD, crop.shape[1] + 2 * PAD, 3), np.float32)
-    out[:] = bg
-    out[PAD:-PAD, PAD:-PAD] = crop
-    return out, x0, y0
+    pad = ((PAD, PAD), (PAD, PAD), (0, 0))
+    return np.pad(im[y0:y1, x0:x1], pad, mode="edge"), np.pad(bgm[y0:y1, x0:x1], pad, mode="edge"), x0, y0
 
 
 def flood_from_border(passable):
@@ -114,42 +119,18 @@ def to_rgba(rgb, alpha):
     return Image.fromarray(out, "RGBA")
 
 
-def cut_building(im, box, bg, smoke_y):
-    crop, x0, y0 = padded_crop(im, box, bg)
+def cut_building(im, bgm, box):
+    """Fond retiré par remplissage depuis les bords : ce qui est enfermé par un contour (intérieur d'un nuage de fumée,
+    verre d'une serre) reste opaque, ce qui touche le bord de la planche part."""
+    crop, bg, x0, y0 = padded_crop(im, bgm, box)
     d = np.sqrt(((crop - bg) ** 2).sum(2))
-    removed = flood_from_border(d < 30)
-    fg = ~removed
-    # liseré pâle collé au fond (reflet de la planche sous le jardin) : pixels clairs et peu colorés à moins de 5 px du fond
-    mx, mn = crop.max(2), crop.min(2)
-    sat = (mx - mn) / np.maximum(mx, 1)
-    luma = 0.3 * crop[..., 0] + 0.59 * crop[..., 1] + 0.11 * crop[..., 2]
-    pale = ndi.binary_dilation(removed, iterations=5) & (luma > 170) & (sat < 0.30)
-    fg &= ~pale
+    fg = ~flood_from_border(d < 22)
     fg = ndi.binary_erosion(fg, iterations=1)  # le liseré clair du fond disparaît
-    alpha = soft(fg)
-    rgb = crop.copy()
-    if smoke_y is not None:
-        band = np.zeros(d.shape, bool)
-        band[: smoke_y - y0 + PAD, :] = True
-        a_soft = np.clip((d - 6.0) / (SMOKE_D - 6.0), 0, 1)
-        # la fumée est translucide : on retrouve sa couleur pleine et on garde l'alpha doux
-        unp = bg + (crop - bg) / np.maximum(a_soft, 1e-3)[..., None]
-        use = band & (a_soft < 1)
-        rgb[use] = unp[use]
-        alpha = np.where(use, a_soft * SMOKE_ALPHA, alpha)
-        # on ne garde que ce qui touche le bâtiment (pas de poussière isolée)
-        lab, _ = ndi.label(alpha > 0.04)
-        solid = alpha > 0.9
-        if solid.any():
-            main = np.bincount(lab[solid]).argmax()
-            alpha = np.where(lab == main, alpha, 0)
-    return rgb, np.clip(alpha, 0, 1)
+    return crop, soft(fg)
 
 
-def cut_creature(im, box, bg, color, offset):
-    crop, x0, y0 = padded_crop(im, box, bg)
-    y1 = y0 + crop.shape[0] - 2 * PAD
-    x1 = x0 + crop.shape[1] - 2 * PAD
+def cut_creature(im, bgm, box, color):
+    crop, bg, x0, y0 = padded_crop(im, bgm, box)
     r, g, b = crop[..., 0], crop[..., 1], crop[..., 2]
     mx, mn = crop.max(2), crop.min(2)
     sat = (mx - mn) / np.maximum(mx, 1)
@@ -242,23 +223,26 @@ def main():
     meta = {}
     for fname, (role, cols) in SHEETS.items():
         im = load(os.path.join(src, fname))
-        boxes, bg = find_sprites(im)
-        for i, (box, color) in enumerate(zip(boxes, cols)):
+        bgm = bg_model(im)
+        boxes = find_sprites(im, bgm)
+        for box, color in zip(boxes, cols):
             if role == "crea":
-                rgb, alpha = cut_creature(im, box, bg, color, i)
+                rgb, alpha = cut_creature(im, bgm, box, color)
                 scale, atlas = CREATURE_SCALE, "creatures"
             else:
-                rgb, alpha = cut_building(im, box, bg, SMOKE_Y.get((role, color)))
+                rgb, alpha = cut_building(im, bgm, box)
                 scale, atlas = BUILDING_SCALE, "buildings"
             bx0, by0, bx1, by1 = body_box(rgb, alpha)
             full = to_rgba(rgb, alpha)
             trimmed, tb = trim(full)
-            # ancrage : centre du corps du bâtiment (sans la fumée) ; centre de la créature (pivot de rotation)
+            # ancrage : centre au sol du bâtiment ; centre de la créature (pivot de rotation)
             if role == "crea":
                 cx, cy = (tb[0] + tb[2]) / 2 - tb[0], (tb[1] + tb[3]) / 2 - tb[1]
                 body = (0, 0, trimmed.width, trimmed.height)
             else:
-                cx, cy = (bx0 + bx1) / 2 - tb[0], (by0 + by1) / 2 - tb[1]
+                # centre au sol : milieu du corps en largeur, bas du corps moins ANCHOR_UP fois sa largeur
+                # (la hauteur des bâtiments varie beaucoup avec la fumée, le sol non)
+                cx, cy = (bx0 + bx1) / 2 - tb[0], by1 - ANCHOR_UP * (bx1 - bx0) - tb[1]
                 body = (bx0 - tb[0], by0 - tb[1], bx1 - tb[0], by1 - tb[1])
             small = trimmed.resize((max(1, round(trimmed.width * scale)), max(1, round(trimmed.height * scale))), Image.LANCZOS)
             key = f"{role}.{color}"
