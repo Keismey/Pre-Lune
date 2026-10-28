@@ -37,6 +37,10 @@ SHEETS = {
 GRASS_FILE = "herbe.jpg"
 PATH_FILE = "chemin.jpg"
 
+# Poches de fond enfermées par un contour (guirlande de l'atelier bleu : ciel entre le toit et les lanternes, intérieur de
+# l'anneau) à retirer aussi : (rôle, couleur) -> fraction de la hauteur, seules les poches au-dessus sont retirées
+# (la lueur blanche de la grande lanterne, plus bas, reste). Les autres bâtiments gardent leurs poches (verre de la serre).
+HOLES_ABOVE = {("work", "blue"): 0.25}
 ANCHOR_UP = 0.58  # hauteur du point d'ancrage au-dessus du bas du bâtiment, en largeur du corps
 BUILDING_SCALE = 0.4  # planche (px) -> atlas (px) ; environ 380 px de jardin sur la planche = 152 px
 CREATURE_SCALE = 0.40
@@ -119,12 +123,18 @@ def to_rgba(rgb, alpha):
     return Image.fromarray(out, "RGBA")
 
 
-def cut_building(im, bgm, box):
+def cut_building(im, bgm, box, holes_above=None):
     """Fond retiré par remplissage depuis les bords : ce qui est enfermé par un contour (intérieur d'un nuage de fumée,
     verre d'une serre) reste opaque, ce qui touche le bord de la planche part."""
     crop, bg, x0, y0 = padded_crop(im, bgm, box)
     d = np.sqrt(((crop - bg) ** 2).sum(2))
-    fg = ~flood_from_border(d < 22)
+    bgmask = flood_from_border(d < 22)
+    if holes_above:
+        lab, n = ndi.label((d < 22) & ~bgmask)
+        for i, (sl, cm) in enumerate(zip(ndi.find_objects(lab), ndi.center_of_mass(d < 22, lab, range(1, n + 1))), 1):
+            if (lab[sl] == i).sum() > 10 and cm[0] < holes_above * d.shape[0]:
+                bgmask |= lab == i
+    fg = ~bgmask
     fg = ndi.binary_erosion(fg, iterations=1)  # le liseré clair du fond disparaît
     return crop, soft(fg)
 
@@ -230,7 +240,7 @@ def main():
                 rgb, alpha = cut_creature(im, bgm, box, color)
                 scale, atlas = CREATURE_SCALE, "creatures"
             else:
-                rgb, alpha = cut_building(im, bgm, box)
+                rgb, alpha = cut_building(im, bgm, box, HOLES_ABOVE.get((role, color)))
                 scale, atlas = BUILDING_SCALE, "buildings"
             bx0, by0, bx1, by1 = body_box(rgb, alpha)
             full = to_rgba(rgb, alpha)
