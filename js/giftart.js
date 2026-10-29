@@ -157,25 +157,27 @@ export function drawBridge(ctx, a, b, roadW, G, tilePat) {
   ctx.restore();
 }
 
-// Rond-point : couronne de pavés autour d'un îlot d'herbe, posée sur le croisement.
-export function drawRoundabout(ctx, n, roadW, G, tilePat, tileColor) {
-  const R = roadW * G.ring_r;
+// Rond-point : une couronne de pavés de la largeur d'un chemin autour d'un îlot d'herbe. `rc` est le rayon de sa ligne
+// centrale (celui que suivent les créatures).
+export function drawRoundabout(ctx, n, roadW, rc, G, tilePat, tileColor) {
+  const outer = rc + roadW / 2;
+  const island = Math.max(4, rc - roadW / 2);
   ctx.save();
   ctx.fillStyle = G.ring_edge;
   ctx.beginPath();
-  ctx.arc(n.x, n.y, R, 0, Math.PI * 2);
+  ctx.arc(n.x, n.y, outer, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = tilePat || tileColor;
   ctx.beginPath();
-  ctx.arc(n.x, n.y, R - G.ring_edge_w, 0, Math.PI * 2);
+  ctx.arc(n.x, n.y, outer - G.ring_edge_w, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = G.island_edge;
   ctx.beginPath();
-  ctx.arc(n.x, n.y, roadW * G.island_r + G.ring_edge_w * 0.6, 0, Math.PI * 2);
+  ctx.arc(n.x, n.y, island + G.ring_edge_w * 0.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = G.island;
   ctx.beginPath();
-  ctx.arc(n.x, n.y, roadW * G.island_r, 0, Math.PI * 2);
+  ctx.arc(n.x, n.y, island, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }

@@ -1194,7 +1194,12 @@ export function createSim(cfg, layout, seed, saved = null) {
     occNode = new Map();
     for (const cr of sim.creatures) {
       if (cr.stage !== "walk" || cr.node === null) continue;
-      if (cr.next !== null) {
+      if (cr.ring) {
+        // sur l'anneau d'un rond-point : elle occupe le croisement
+        let list = occNode.get(cr.ring.node);
+        if (!list) occNode.set(cr.ring.node, (list = []));
+        list.push(cr);
+      } else if (cr.next !== null) {
         const ad = edgeBetween(cr.node, cr.next);
         if (!ad) continue;
         const from = nodes.get(cr.node);
@@ -1251,12 +1256,12 @@ export function createSim(cfg, layout, seed, saved = null) {
   const jq = new Map(); // nœud → créatures arrêtées à la ligne d'arrêt, dans l'ordre d'arrivée
   const jbusy = new Map(); // nœud → pas jusqu'auxquels ses places sont occupées
 
-  function requestEntry(cr) {
-    if (cr.inQueue === cr.next) return;
-    let q = jq.get(cr.next);
-    if (!q) jq.set(cr.next, (q = []));
+  function requestEntry(cr, nid = cr.next) {
+    if (cr.inQueue === nid) return;
+    let q = jq.get(nid);
+    if (!q) jq.set(nid, (q = []));
     q.push(cr);
-    cr.inQueue = cr.next;
+    cr.inQueue = nid;
     cr.wait = 0;
   }
 
@@ -1283,6 +1288,7 @@ export function createSim(cfg, layout, seed, saved = null) {
         const list = ad ? occEdge.get(occKey(edges.get(ad.edge), nid)) : null;
         if (list && list.some((o) => o.s < gapPx(head))) clear = false;
       }
+      if (clear && nodes.get(nid).rb && !ringEntryClear(head, nodes.get(nid))) clear = false;
       if (clear || head.wait >= deadlockTicks) {
         q.shift();
         head.inQueue = 0;
@@ -1404,7 +1410,7 @@ export function createSim(cfg, layout, seed, saved = null) {
     cr.next = null;
     cr.stage = "walk";
     cr.moving = false;
-    cr.granted = 0;
+    if (cr.granted === cr.node) cr.granted = 0; // l'autorisation d'un rond-point reste valable jusqu'à lui
     const n = nodes.get(cr.node);
     if (isDestNode(n, cr.color)) {
       // arrivée à la porte de l'atelier : elle rejoint sa file de déchargement
@@ -1415,8 +1421,181 @@ export function createSim(cfg, layout, seed, saved = null) {
     }
   }
 
+  // ---------- Rond-point : les créatures font le tour de l'anneau ----------
+  // Une créature qui va traverser un rond-point s'arrête à la ligne d'arrêt (en dehors de la couronne), attend son tour,
+  // puis marche jusqu'à l'anneau (à roundabout_radius_px du centre), le suit dans le sens inverse des aiguilles d'une
+  // montre jusqu'au point où son chemin de sortie quitte l'anneau, et repart sur ce chemin. Elle garde l'écart normal
+  // avec la créature qui la précède sur l'anneau.
+
+  const TAU = Math.PI * 2;
+  const mod2pi = (a) => ((a % TAU) + TAU) % TAU;
+  const ringStep = (G.ring_step_deg * Math.PI) / 180;
+  const RC = G.roundabout_radius_px;
+  const RSTOP = RC + cfg.roads.width_px / 2 + T.stop_px; // distance du centre à la ligne d'arrêt, le long de la route
+  const ringOf = (id) => {
+    const n = nodes.get(id);
+    return n && n.rb && isJunction(id) ? RC : 0;
+  };
+
+  // Distance, le long de l'anneau et dans le sens de la marche, entre deux angles (sens inverse des aiguilles : angle décroissant à l'écran).
+  const ringDist = (aFrom, aTo) => mod2pi(aFrom - aTo) * RC;
+
+  // Rond-point que la créature va traverser, si son centre est à moins de RSTOP sur sa route : { id, d (distance le long de la route) }.
+  function ringApproach(cr) {
+    if (cr.next === null) return null;
+    let acc = Math.hypot(cr.tx - cr.x, cr.ty - cr.y);
+    let b = cr.next;
+    for (let i = 0; i < 8; i++) {
+      if (acc > RSTOP + 1) return null;
+      if (ringOf(b) > 0) return { id: b, d: acc };
+      if (isDestNode(nodes.get(b), cr.color)) return null;
+      const nxt = chooseNext(b, cr.color);
+      const ad = nxt === null ? null : edgeBetween(b, nxt);
+      if (!ad) return null;
+      acc += edges.get(ad.edge).len;
+      b = nxt;
+    }
+    return null;
+  }
+
+  // L'anneau est-il libre autour du point d'entrée de cette créature ?
+  function ringEntryClear(head, n) {
+    const a = Math.atan2(head.y - n.y, head.x - n.x);
+    const g = gapPx(head);
+    for (const o of sim.creatures) {
+      if (!o.ring || o.ring.node !== n.id || o === head) continue;
+      const ao = Math.atan2(o.y - n.y, o.x - n.x);
+      if (Math.min(ringDist(a, ao), ringDist(ao, a)) < g) return false;
+    }
+    return true;
+  }
+
+  // Distance jusqu'à la créature qui précède cr sur l'anneau (INF s'il n'y en a pas).
+  function ringAheadGap(cr, n) {
+    const a = Math.atan2(cr.y - n.y, cr.x - n.x);
+    let best = INF;
+    for (const o of sim.creatures) {
+      if (o === cr || !o.ring || o.ring.node !== n.id) continue;
+      const d = ringDist(a, Math.atan2(o.y - n.y, o.x - n.x));
+      if (d < 1e-6 && o.id > cr.id) continue; // même place : la plus ancienne passe d'abord
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  // La créature est au bord de l'anneau : prépare le tour (points de l'arc jusqu'à la sortie). Faux (et elle file au centre
+  // comme sur un croisement ordinaire) si le tour est impossible.
+  function startRing(cr, n, dj) {
+    // sortie : le premier tronçon de sa route qui franchit le cercle de l'anneau
+    let a = n;
+    let b = nodes.get(chooseNext(n.id, cr.color));
+    for (let i = 0; b && i < 6 && Math.hypot(b.x - n.x, b.y - n.y) < RC + 1; i++) {
+      if (isJunction(b.id) || isDestNode(b, cr.color)) {
+        b = null;
+        break;
+      }
+      const nx = chooseNext(b.id, cr.color);
+      a = b;
+      b = nx === null ? null : nodes.get(nx);
+    }
+    if (!b || dj < RC - 2) {
+      cr.ringSkip = n.id;
+      return false;
+    }
+    // point X de a→b à RC du centre
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const fx = a.x - n.x;
+    const fy = a.y - n.y;
+    const qa = ex * ex + ey * ey;
+    const qb = 2 * (fx * ex + fy * ey);
+    const qc = fx * fx + fy * fy - RC * RC;
+    const disc = qb * qb - 4 * qa * qc;
+    if (qa < 1e-9 || disc < 0) {
+      cr.ringSkip = n.id;
+      return false;
+    }
+    const tt = Math.min(1, Math.max(0, (-qb + Math.sqrt(disc)) / (2 * qa)));
+    const X = { x: a.x + ex * tt, y: a.y + ey * tt };
+    const aE = Math.atan2(cr.y - n.y, cr.x - n.x);
+    const aX = Math.atan2(X.y - n.y, X.x - n.x);
+    const delta = mod2pi(aE - aX);
+    const k = Math.max(1, Math.ceil(delta / ringStep));
+    const pts = [];
+    for (let j = 1; j < k; j++) {
+      const ang = aE - (delta * j) / k;
+      pts.push({ x: n.x + Math.cos(ang) * RC, y: n.y + Math.sin(ang) * RC });
+    }
+    pts.push(X);
+    cr.ring = { node: n.id, pts, i: 0, a: a.id, b: b.id };
+    return true;
+  }
+
+  // Avance sur l'anneau ; renvoie le budget de marche restant.
+  function moveRing(cr, budget) {
+    const rg = cr.ring;
+    const n = nodes.get(rg.node);
+    if (!n || !n.rb || !isJunction(n.id)) {
+      // le rond-point a disparu en route : elle file vers le centre comme sur un croisement ordinaire
+      cr.ring = null;
+      if (n && cr.next !== null && nodes.has(cr.next)) {
+        cr.tx = nodes.get(cr.next).x;
+        cr.ty = nodes.get(cr.next).y;
+      }
+      cr.moving = cr.next !== null;
+      return budget;
+    }
+    let move = budget;
+    const ahead = ringAheadGap(cr, n);
+    if (ahead < INF) move = Math.min(move, Math.max(0, ahead - gapPx(cr)));
+    let left = move;
+    while (left > 1e-9 && rg.i < rg.pts.length) {
+      const p = rg.pts[rg.i];
+      const dx = p.x - cr.x;
+      const dy = p.y - cr.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 0) {
+        cr.dx = dx / d;
+        cr.dy = dy / d;
+      }
+      if (d <= left + 1e-9) {
+        cr.x = p.x;
+        cr.y = p.y;
+        left -= d;
+        rg.i++;
+      } else {
+        cr.x += cr.dx * left;
+        cr.y += cr.dy * left;
+        left = 0;
+      }
+    }
+    if (rg.i >= rg.pts.length) {
+      // sortie : elle est sur le tronçon a→b de son chemin, et repart vers b
+      cr.ring = null;
+      cr.granted = 0;
+      if (nodes.has(rg.a) && nodes.has(rg.b) && edgeBetween(rg.a, rg.b)) {
+        cr.node = rg.a;
+        cr.next = rg.b;
+        cr.tx = nodes.get(rg.b).x;
+        cr.ty = nodes.get(rg.b).y;
+        cr.moving = true;
+      } else {
+        cr.node = n.id;
+        cr.next = null;
+        cr.moving = false;
+      }
+      return budget - (move - left);
+    }
+    return move < budget ? 0 : budget - (move - left); // freinée par la créature de devant : plus rien à faire ce pas
+  }
+
   function moveCreature(cr, budget) {
     for (let guard = 0; guard < 8 && budget > 1e-9; guard++) {
+      if (cr.ring) {
+        budget = moveRing(cr, budget);
+        if (cr.ring) return;
+        continue;
+      }
       if (!cr.moving) {
         decide(cr);
         if (cr.done || !cr.moving) return;
@@ -1432,7 +1611,7 @@ export function createSim(cfg, layout, seed, saved = null) {
       if (cr.stage === "walk") {
         const g = leaderGap(cr);
         if (g < INF) allow = Math.min(allow, Math.max(0, g - gapPx(cr))); // pas de dépassement : on reste derrière
-        if (isJunction(cr.next) && cr.granted !== cr.next) {
+        if (isJunction(cr.next) && !ringOf(cr.next) && cr.granted !== cr.next) {
           const lim = dist - T.stop_px; // ligne d'arrêt avant le croisement
           if (lim <= 1e-6) {
             requestEntry(cr);
@@ -1440,6 +1619,37 @@ export function createSim(cfg, layout, seed, saved = null) {
             return;
           }
           allow = Math.min(allow, lim);
+        } else {
+          // rond-point sur la route : ligne d'arrêt hors de la couronne, puis entrée au bord de l'anneau
+          const ap = ringApproach(cr);
+          if (ap && cr.ringSkip !== ap.id) {
+            if (cr.granted !== ap.id) {
+              const lim = ap.d - RSTOP;
+              if (lim <= 1e-6) {
+                requestEntry(cr, ap.id);
+                cr.wait++;
+                return;
+              }
+              allow = Math.min(allow, lim);
+            } else {
+              const J = nodes.get(ap.id);
+              const dj = Math.hypot(cr.x - J.x, cr.y - J.y);
+              const lim = dj - RC;
+              if (lim <= 1e-6) {
+                if (startRing(cr, J, dj)) continue;
+              } else {
+                allow = Math.min(allow, lim);
+              }
+            }
+          } else if (isJunction(cr.next) && cr.granted !== cr.next) {
+            const lim = dist - T.stop_px; // rond-point que la créature ne peut pas contourner : croisement ordinaire
+            if (lim <= 1e-6) {
+              requestEntry(cr);
+              cr.wait++;
+              return;
+            }
+            allow = Math.min(allow, lim);
+          }
         }
       }
       if (allow <= 1e-9) return;
@@ -1456,6 +1666,13 @@ export function createSim(cfg, layout, seed, saved = null) {
       }
     }
   }
+
+  // Une créature marche-t-elle sur un pont ? (l'affichage la dessine au-dessus du tablier ; les autres passent dessous)
+  sim.onBridge = (cr) => {
+    if (cr.stage !== "walk" || cr.node === null || cr.next === null) return false;
+    const ad = edgeBetween(cr.node, cr.next);
+    return !!ad && !!edges.get(ad.edge).bridge;
+  };
 
   // Brume : une file de 10 ou plus lance le compteur de 10 s ; il s'arrête quand toutes les files sont redescendues
   // à 7 ou moins (et repart de 10 s au prochain débordement) ; à zéro, la partie s'arrête.

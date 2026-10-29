@@ -134,8 +134,8 @@ Monde logique 1080 × 1920 mis à l'échelle de l'écran, devicePixelRatio plafo
 | Cadeau | Rareté (poids) | Effet | Précisions |
 |---|---|---|---|
 | Sac de dalles | Commun (24) | +20 dalles tout de suite | Le plafond de 120 ne limite que le gain automatique de fin de journée, pas ce cadeau |
-| Rond-point | Commun (22) | Se pose sur un croisement : 2 créatures à la fois | 1 par cadeau. Un croisement = 3 chemins ou plus. On le touche, ou on le glisse depuis la barre |
-| Pont | Commun (18) | Passe par-dessus un chemin, ou franchit 1 à 3 cases d'eau | 2 poses par cadeau. On le trace d'un chemin à un autre (4 cases au plus, au moins un chemin ou de l'eau à franchir) ; il coûte des dalles comme un chemin, ne crée pas de croisement, et ses seules entrées sont ses deux extrémités |
+| Rond-point | Commun (22) | Se pose sur un croisement : 2 créatures à la fois | 1 par cadeau. Un croisement = 3 chemins ou plus. On le touche, ou on le glisse depuis la barre. Les créatures s'arrêtent avant la couronne et en font le tour dans le sens inverse des aiguilles d'une montre jusqu'à leur sortie |
+| Pont | Commun (18) | Passe par-dessus un chemin, ou franchit 1 à 3 cases d'eau | 2 poses par cadeau. On le trace d'un chemin à un autre (4 cases au plus, au moins un chemin ou de l'eau à franchir) ; il coûte des dalles comme un chemin, ne crée pas de croisement, et ses seules entrées sont ses deux extrémités. Les créatures du chemin franchi passent dessous (cachées par le tablier) |
 | Feu de lanterne | Peu commun (12) | Fait alterner les axes d'un croisement, débit moyen ×1,5 | 1 par cadeau |
 | Chemin doré | Peu commun (10) | 8 cases de chemin à vitesse ×1,5 | Se pose sur des cases de chemin existantes |
 | Tunnel | Rare (6) | Deux portails reliés, 6 cases au plus, sous n'importe quel obstacle | Poids doublé (12) sur la carte Montagnes |

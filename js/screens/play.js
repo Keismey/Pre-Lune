@@ -924,8 +924,13 @@ export function createPlayScreen(game) {
   // Roues du pont et du rond-point posés, dessinées par-dessus les chemins.
   function drawSpecials(ctx) {
     const W0 = cfg.roads.width_px;
+    for (const n of sim.nodes.values()) if (n.rb && !n.door && n.adj.length >= 3) drawRoundabout(ctx, n, W0, cfg.gifts.roundabout_radius_px, GF, pathPat, PC.tile);
+  }
+
+  // Les tabliers des ponts passent par-dessus tout ce qui est dessiné avant (chemins, créatures qui passent dessous).
+  function drawBridges(ctx) {
+    const W0 = cfg.roads.width_px;
     for (const e of sim.edges.values()) if (e.bridge) drawBridge(ctx, sim.nodes.get(e.a), sim.nodes.get(e.b), W0, GF, pathPat);
-    for (const n of sim.nodes.values()) if (n.rb && !n.door && n.adj.length >= 3) drawRoundabout(ctx, n, W0, GF, pathPat, PC.tile);
   }
 
   // Aides à la pose : anneaux qui pulsent sur les croisements possibles, aperçu du pont, rond-point glissé.
@@ -1327,11 +1332,21 @@ export function createPlayScreen(game) {
       // bâtiment (ou à son côté, ou qui y entre) passe sous son toit et ses murs ; devant, elle marche sur le terrain.
       const order = [];
       for (const b of sim.buildings) order.push({ y: b.y + SP.depth_front * unit, b, cr: null });
-      for (const cr of sim.creatures) order.push({ y: cr.py + (cr.y - cr.py) * alpha, b: null, cr });
+      const onBridge = [];
+      for (const cr of sim.creatures) (sim.onBridge(cr) ? onBridge : order).push({ y: cr.py + (cr.y - cr.py) * alpha, b: null, cr });
       order.sort((p, q) => p.y - q.y);
       for (const o of order) {
         if (o.b) drawBuilding(ctx, o.b, tickF);
         else drawCreature(ctx, o.cr, alpha);
+      }
+      // ponts : le tablier couvre les créatures qui passent dessous ; celles qui le traversent sont dessinées par-dessus, un peu soulevées
+      drawBridges(ctx);
+      onBridge.sort((p, q) => p.y - q.y);
+      for (const o of onBridge) {
+        ctx.save();
+        ctx.translate(0, -GF.bridge_lift_px);
+        drawCreature(ctx, o.cr, alpha);
+        ctx.restore();
       }
       for (const b of sim.buildings) drawQueue(ctx, b);
       for (const b of sim.buildings) if (b.over) drawPanicRing(ctx, b);

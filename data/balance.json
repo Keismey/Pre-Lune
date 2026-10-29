@@ -520,15 +520,14 @@
         "rail_off": 0.68,
         "shade": "rgba(20, 10, 40, 0.32)",
         "shade_dy": 12,
-        "ring_r": 1.25,
+        "bridge_lift_px": 9,
         "ring_edge_w": 5,
         "plank_px": 16,
         "toast_s": 3,
         "ring_edge": "#5a3b2a",
         "island": "#8fcf6b",
         "island_edge": "#3d7a2e",
-        "island_r": 0.42,
-        "choice": {
+                "choice": {
           "title_y": 300,
           "title_font": 84,
           "sub_y": 400,
@@ -624,6 +623,8 @@
     "rerolls": 1,
     "pick_px": 70,
     "roundabout_capacity": 2,
+    "roundabout_radius_px": 36,
+    "ring_step_deg": 20,
     "bridge_max_cells": 4,
     "bridge_min_px": 60,
     "kinds": {
