@@ -10,6 +10,7 @@ import { createSim } from "../sim.js";
 import { createRng } from "../rng.js";
 import { drawText, roundRectPath, wrapLines } from "../draw.js";
 import { drawSprite, drawSymbol, makeGrassPattern, makePathPattern } from "../assets.js";
+import { drawGiftIcon, drawUndoIcon, drawBridge, drawRoundabout } from "../giftart.js";
 
 export function createPlayScreen(game) {
   const { cfg, layout, assets } = game;
@@ -25,12 +26,15 @@ export function createPlayScreen(game) {
   const TU = cfg.tutorial;
   const M = P.menu;
   const E = P.end;
+  const GF = P.gifts;
+  const GC = GF.choice;
+  const GK = cfg.gifts.kinds;
   const W = layout.width;
   const hz = cfg.loop.sim_hz;
   const unit = cfg.buildings.size * layout.cell; // côté d'un bâtiment
 
   let sim = null;
-  let mode = "play"; // play | paused | resume (partie sauvegardée : continuer ou non) | end
+  let mode = "play"; // play | gift (choix de fin de journée) | paused | resume (partie sauvegardée : continuer ou non) | end
   let cursorOffset = false;
   let assist = true;
   let finger = null; // doigt posé (monde)
@@ -45,6 +49,12 @@ export function createPlayScreen(game) {
   let endInfo = null; // { best, newRecord } une fois la partie finie
   let tuto = { draw: false, erase: false, mist: false };
   let bubble = null; // bulle du tutoriel : { key, until (pas de simulation), warn, eraseBase }
+  let armedId = 0; // cadeau de la barre prêt à poser (id), 0 si aucun
+  let slotDown = null; // doigt posé sur un emplacement : { i, x, y }
+  let ghost = null; // rond-point glissé depuis la barre : { x, y }
+  let bridgeDrag = null; // pont en cours : { id, a, b }
+  let giftTap = false; // rond-point prêt : le doigt est posé sur la carte, la pose se fait au relâchement
+  let giftSel = null; // choix de fin de journée : proposition à prendre quand la barre est pleine (n° de proposition)
 
   // ---------- Boutons ----------
 
@@ -52,8 +62,28 @@ export function createPlayScreen(game) {
   const by = bar.y + (bar.h - S.button_h) / 2;
   const buttons = {
     pause: { id: "pause", x: 0, y: 0, w: P.pause.w, h: P.pause.h },
-    undo: { id: "undo", x: S.bar_margin, y: by, w: P.undo.w, h: S.button_h },
+    undo: { id: "undo", x: GF.margin, y: bar.y + (bar.h - GF.slot) / 2, w: P.undo.w, h: GF.slot },
   };
+  // emplacements de cadeaux de la barre du bas, à droite d'Annuler
+  const slotX0 = GF.margin + P.undo.w + GF.gap;
+  for (let i = 0; i < cfg.gifts.slots; i++) {
+    buttons[`slot${i}`] = { id: `slot${i}`, slot: i, x: slotX0 + i * (GF.slot + GF.gap), y: bar.y + (bar.h - GF.slot) / 2, w: GF.slot, h: GF.slot };
+  }
+  const slotButtons = () => Object.values(buttons).filter((b) => b.slot !== undefined);
+  const armedIndex = () => (armedId ? sim.gifts.findIndex((g) => g.id === armedId) : -1);
+
+  // Choix de fin de journée : une carte par proposition, puis Relancer ; si la barre est pleine, les emplacements à jeter.
+  function giftButtons() {
+    const out = [];
+    if (giftSel !== null) {
+      out.push({ id: "cancel", x: (W - GC.btn_w) / 2, y: GC.prompt_y + 110, w: GC.btn_w, h: GC.btn_h });
+      for (const b of slotButtons()) if (sim.gifts[b.slot]) out.push(b);
+      return out;
+    }
+    sim.choice.offers.forEach((kind, i) => out.push({ id: `offer${i}`, i, x: (W - GC.card_w) / 2, y: GC.first_y + i * (GC.card_h + GC.card_gap), w: GC.card_w, h: GC.card_h }));
+    if (sim.canReroll()) out.push({ id: "reroll", x: (W - GC.btn_w) / 2, y: GC.first_y + sim.choice.offers.length * (GC.card_h + GC.card_gap) + 10, w: GC.btn_w, h: GC.btn_h });
+    return out;
+  }
 
   const column = (ids, y0, h) => ids.map((id, i) => ({ id, x: (W - M.btn_w) / 2, y: y0 + i * (h + M.btn_gap), w: M.btn_w, h }));
   const endX0 = (W - (2 * E.btn_w + E.btn_gap)) / 2;
@@ -70,7 +100,7 @@ export function createPlayScreen(game) {
   };
 
   const inRect = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-  const activeButtons = () => (mode === "play" ? Object.values(buttons) : menus[mode] || []);
+  const activeButtons = () => (mode === "play" ? Object.values(buttons) : mode === "gift" ? giftButtons() : menus[mode] || []);
   const buttonAt = (x, y) => activeButtons().find((b) => inRect(b, x, y)) || null;
   const dn = (b) => (pressed === b ? S.shadow_dy / 2 : 0);
 
@@ -756,6 +786,11 @@ export function createPlayScreen(game) {
 
   function drawTutorial(ctx, tickF) {
     if (mode !== "play") return;
+    const armed = sim.gifts[armedIndex()];
+    if (armed && !bridgeDrag && !(bubble && sim.tick < bubble.until)) {
+      drawBubble(ctx, t(`gift.hint.${armed.kind}`), false);
+      return;
+    }
     if (bubble && sim.tick < bubble.until) {
       drawBubble(ctx, t(bubble.key), bubble.warn);
       return;
@@ -833,13 +868,7 @@ export function createPlayScreen(game) {
     ctx.fillStyle = on ? C.button_selected : C.button;
     roundRectPath(ctx, b.x, b.y + dn(b), b.w, b.h, S.button_radius);
     ctx.fill();
-    drawText(ctx, t("undo.label"), b.x + b.w / 2, b.y + b.h / 2 - 8 + dn(b), {
-      font: ui.font,
-      size: U.font,
-      color: on ? C.text_dark : C.text,
-      weight: 800,
-      maxWidth: b.w - 40,
-    });
+    drawUndoIcon(ctx, b.x + b.w / 2, b.y + b.h / 2 - 6 + dn(b), U.icon * 2, U.icon_w, on ? C.text_dark : C.text);
     if (on) {
       const frac = Math.max(0, u.left / u.total);
       ctx.fillStyle = C.text_dark;
@@ -850,9 +879,147 @@ export function createPlayScreen(game) {
     ctx.restore();
   }
 
+  // Barre de cadeaux : 6 emplacements ; un cadeau prêt à poser est jaune ; « ×2 » quand il reste plusieurs poses.
+  function drawGiftBar(ctx, discarding) {
+    const armed = armedIndex();
+    for (const b of slotButtons()) {
+      const g = sim.gifts[b.slot];
+      const y = b.y + dn(b);
+      if (!g) {
+        ctx.save();
+        ctx.globalAlpha = GF.empty_alpha;
+        ctx.strokeStyle = C.text;
+        ctx.lineWidth = 6;
+        ctx.setLineDash(GF.empty_dash);
+        roundRectPath(ctx, b.x + 3, y + 3, b.w - 6, b.h - 6, GF.radius);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      const on = b.slot === armed || (discarding && pressed === b);
+      ctx.fillStyle = C.text_shadow;
+      roundRectPath(ctx, b.x, y + S.shadow_dy, b.w, b.h, GF.radius);
+      ctx.fill();
+      ctx.fillStyle = on ? C.button_selected : C.button;
+      roundRectPath(ctx, b.x, y, b.w, b.h, GF.radius);
+      ctx.fill();
+      if (discarding) {
+        ctx.strokeStyle = PC.cursor;
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      }
+      drawGiftIcon(ctx, g.kind, b.x + b.w / 2, y + b.h / 2, GF.icon, on ? C.text_dark : C.text, on ? C.text : C.text_dark);
+      if (g.left > 1) {
+        drawText(ctx, `×${g.left}`, b.x + b.w - GF.count_dx, y + b.h - GF.count_dy, {
+          font: ui.font,
+          size: GF.count_font,
+          color: on ? C.text_dark : C.text,
+          weight: 800,
+          align: "right",
+        });
+      }
+    }
+  }
+
+  // Roues du pont et du rond-point posés, dessinées par-dessus les chemins.
+  function drawSpecials(ctx) {
+    const W0 = cfg.roads.width_px;
+    for (const e of sim.edges.values()) if (e.bridge) drawBridge(ctx, sim.nodes.get(e.a), sim.nodes.get(e.b), W0, GF, pathPat);
+    for (const n of sim.nodes.values()) if (n.rb && !n.door && n.adj.length >= 3) drawRoundabout(ctx, n, W0, GF, pathPat, PC.tile);
+  }
+
+  // Aides à la pose : anneaux qui pulsent sur les croisements possibles, aperçu du pont, rond-point glissé.
+  function drawGiftAim(ctx, tickF) {
+    const g = sim.gifts[armedIndex()];
+    if (g && g.kind === "roundabout") {
+      const k = 0.5 + 0.5 * Math.sin((tickF / hz / GF.hint_pulse_s) * Math.PI * 2);
+      ctx.save();
+      ctx.strokeStyle = GF.bridge_ok;
+      ctx.lineWidth = GF.hint_ring_w;
+      ctx.globalAlpha = 0.45 + 0.5 * k;
+      for (const n of sim.nodes.values()) {
+        if (n.rb || n.door || n.adj.length < 3) continue;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, GF.hint_ring_r * (0.85 + 0.15 * k), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (bridgeDrag) {
+      const plan = sim.planBridge(bridgeDrag.a, bridgeDrag.b);
+      const pa = plan.A ? plan.A : bridgeDrag.a;
+      const pb = plan.A ? plan.B : bridgeDrag.b;
+      ctx.save();
+      ctx.strokeStyle = plan.A ? GF.bridge_ok : GF.bridge_bad;
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.lineWidth = GF.bridge_preview_w;
+      ctx.lineCap = "round";
+      ctx.setLineDash(plan.A ? [] : cfg.ui.play.tuto.dash);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const p of [pa, pb]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, GF.bridge_preview_w, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (ghost) {
+      ctx.save();
+      ctx.globalAlpha = GF.drag_alpha;
+      ctx.fillStyle = C.button_selected;
+      ctx.beginPath();
+      ctx.arc(ghost.x, ghost.y, GF.ghost_r, 0, Math.PI * 2);
+      ctx.fill();
+      drawGiftIcon(ctx, "roundabout", ghost.x, ghost.y, GF.ghost_r * 1.3, C.text_dark, C.text);
+      ctx.restore();
+    }
+  }
+
   function drawButtons(ctx) {
     drawPauseButton(ctx);
     drawUndoButton(ctx);
+    drawGiftBar(ctx, false);
+  }
+
+  // Fin de journée : trois cartes (une par cadeau), Relancer ; barre pleine : on choisit le cadeau à jeter.
+  function drawGiftChoice(ctx) {
+    drawVeil(ctx);
+    const c = sim.choice;
+    drawText(ctx, t("gift.title", { n: sim.day - 1 }), W / 2, GC.title_y, titleStyle(GC.title_font));
+    if (giftSel === null) {
+      drawText(ctx, t("gift.sub"), W / 2, GC.sub_y, { font: ui.font, size: GC.sub_font, color: C.text, weight: 700, maxWidth: E.title_max_w });
+      for (const b of giftButtons()) {
+        if (b.id === "reroll") {
+          drawPill(ctx, b, t("gift.reroll"), { font: GC.btn_font });
+          continue;
+        }
+        const kind = c.offers[b.i];
+        const def = GK[kind];
+        const y = b.y + dn(b);
+        ctx.fillStyle = C.text_shadow;
+        roundRectPath(ctx, b.x, y + S.shadow_dy, b.w, b.h, GC.card_radius);
+        ctx.fill();
+        ctx.fillStyle = pressed === b ? GC.card_hi : GC.card_bg;
+        roundRectPath(ctx, b.x, y, b.w, b.h, GC.card_radius);
+        ctx.fill();
+        const dark = pressed === b;
+        drawGiftIcon(ctx, kind, b.x + GC.text_pad + GC.icon_box / 2, y + b.h / 2, GC.icon_box * 0.62, dark ? C.text_dark : C.text, dark ? C.text : C.text_dark);
+        const tx = b.x + GC.text_pad * 1.6 + GC.icon_box;
+        const tw = b.w - (tx - b.x) - GC.text_pad;
+        drawText(ctx, t(`gift.${kind}.name`), tx, y + b.h * 0.27, { font: ui.font, size: GC.name_font, color: dark ? C.text_dark : C.text, weight: 800, align: "left", maxWidth: tw });
+        drawText(ctx, t(`gift.rarity.${def.rarity}`), b.x + b.w - GC.text_pad, y + b.h * 0.27, { font: ui.font, size: GC.rarity_font, color: dark ? C.text_dark : GC.rarity_colors[def.rarity], weight: 800, align: "right" });
+        drawText(ctx, t(`gift.${kind}.desc`, { n: def.tiles }), tx, y + b.h * 0.67, { font: ui.font, size: GC.desc_font, color: dark ? C.text_dark : C.text, weight: 600, align: "left", maxWidth: tw, lineHeight: 1.15 });
+      }
+    } else {
+      drawText(ctx, t("gift.full"), W / 2, GC.prompt_y, { font: ui.font, size: GC.prompt_font, color: C.text, weight: 700, maxWidth: GC.prompt_w, lineHeight: 1.2 });
+      drawPill(ctx, giftButtons()[0], t("gift.cancel"), { font: GC.btn_font });
+      drawGiftBar(ctx, true);
+    }
+    if (giftSel === null) drawGiftBar(ctx, false);
   }
 
   // ---------- Écrans par-dessus la partie : pause, reprise, fin ----------
@@ -936,6 +1103,12 @@ export function createPlayScreen(game) {
     lastDay = sim.day;
     endInfo = null;
     bubble = null;
+    armedId = 0;
+    slotDown = null;
+    ghost = null;
+    bridgeDrag = null;
+    giftSel = null;
+    giftTap = false;
     tuto = { ...getTuto() };
     roadCache = { version: -1, chains: [] };
     walkers.clear();
@@ -976,7 +1149,55 @@ export function createPlayScreen(game) {
     endInfo = { best: Math.max(prev.deliveries, sim.deliveries), newRecord: prev.deliveries > 0 && sim.deliveries > prev.deliveries };
   }
 
+  // Fin de journée : le jeu s'arrête, le geste en cours est rendu, l'écran de choix s'ouvre (et la partie est gardée).
+  function openChoice() {
+    if (sim.stroke) sim.endStroke(false);
+    finger = null;
+    peek = null;
+    slotDown = null;
+    ghost = null;
+    bridgeDrag = null;
+    armedId = 0;
+    giftSel = null;
+    mode = "gift";
+    saveNow();
+  }
+
+  function afterPick() {
+    mode = "play";
+    giftSel = null;
+    pressed = null;
+    saveNow();
+  }
+
+  function tryRoundabout(idx, p) {
+    if (idx < 0) return;
+    const r = sim.placeRoundabout(idx, p.x, p.y);
+    if (!r.ok && r.reason !== "none") toast(`gift.err.${r.reason}`);
+    if (armedIndex() < 0) armedId = 0;
+  }
+
+  // Message court au-dessus de la partie (même bulle que le tutoriel).
+  function toast(key, warn = true) {
+    bubble = { key, until: sim.tick + Math.round(GF.toast_s * hz), warn };
+  }
+
   function overlayAction(id) {
+    if (mode === "gift") {
+      if (id.startsWith("offer")) {
+        const r = sim.pickGift(Number(id.slice(5)));
+        if (r.ok) afterPick();
+        else if (r.reason === "full") giftSel = Number(id.slice(5));
+      } else if (id === "reroll") {
+        sim.rerollGifts();
+      } else if (id === "cancel") {
+        giftSel = null;
+      } else if (id.startsWith("slot") && giftSel !== null) {
+        const r = sim.pickGift(giftSel, Number(id.slice(4)));
+        if (r.ok) afterPick();
+      }
+      return;
+    }
     switch (id) {
       case "resume":
         mode = "play";
@@ -1032,7 +1253,7 @@ export function createPlayScreen(game) {
     },
 
     // Pour les tests dans le navigateur (?debug) : état interne de l'écran.
-    debug: () => ({ sim, mode, tuto, bubble, peek, assistK, endInfo }),
+    debug: () => ({ sim, mode, tuto, bubble, peek, assistK, endInfo, armedId, giftSel }),
 
     // Appelé quand l'appli passe en arrière-plan : pause automatique et sauvegarde.
     hidden() {
@@ -1062,6 +1283,7 @@ export function createPlayScreen(game) {
             updateTutorial();
           }
         }
+        if (sim.choice && !sim.over) openChoice();
         const st = sim.stroke;
         if (finger && st && st.kind === "building" && !st.moved && !st.headId && performance.now() - downAt >= CF.long_press_ms) peek = st.building;
         else if (!finger || !st || st.moved || st.headId) peek = null;
@@ -1077,6 +1299,7 @@ export function createPlayScreen(game) {
 
       drawGrass(ctx);
       drawRoads(ctx, tickF);
+      drawSpecials(ctx);
       for (const s of sim.sites) drawSite(ctx, s, tickF);
       drawPeekLines(ctx, tickF);
 
@@ -1113,6 +1336,7 @@ export function createPlayScreen(game) {
       for (const b of sim.buildings) drawQueue(ctx, b);
       for (const b of sim.buildings) if (b.over) drawPanicRing(ctx, b);
       drawPeekRings(ctx, tickF);
+      drawGiftAim(ctx, tickF);
 
       // petits « +N » qui montent
       for (const p of sim.popups) {
@@ -1151,7 +1375,8 @@ export function createPlayScreen(game) {
       drawTutorial(ctx, tickF);
       drawHud(ctx, alpha);
       drawButtons(ctx);
-      if (mode === "paused") drawPauseMenu(ctx);
+      if (mode === "gift") drawGiftChoice(ctx);
+      else if (mode === "paused") drawPauseMenu(ctx);
       else if (mode === "resume") drawResumeMenu(ctx);
       else if (mode === "end") drawEnd(ctx);
     },
@@ -1171,6 +1396,16 @@ export function createPlayScreen(game) {
         const b = buttonAt(x, y);
         if (b) {
           pressed = b;
+          if (b.slot !== undefined) slotDown = { x, y };
+          return;
+        }
+        const gi = armedIndex();
+        if (gi >= 0) {
+          // un cadeau est prêt : le geste sur la carte le pose au lieu de tracer
+          finger = { x, y };
+          const a = aim(x, y);
+          if (sim.gifts[gi].kind === "bridge") bridgeDrag = { a, b: a };
+          else giftTap = true;
           return;
         }
         finger = { x, y };
@@ -1179,10 +1414,21 @@ export function createPlayScreen(game) {
         const a = aim(x, y);
         startedAtDown = sim.beginStroke(a.x, a.y);
       } else if (type === "move") {
-        if (pressed) return;
+        if (pressed) {
+          // un rond-point se pose aussi en le glissant depuis la barre (la pastille passe au-dessus du doigt)
+          const g = pressed.slot !== undefined ? sim.gifts[pressed.slot] : null;
+          if (g && g.kind === "roundabout" && slotDown && Math.hypot(x - slotDown.x, y - slotDown.y) > cfg.roads.tap_slop_px) {
+            ghost = { x, y: y - cfg.input.cursor_offset_px };
+          }
+          return;
+        }
         finger = { x, y };
         const a = aim(x, y);
-        if (sim.stroke) {
+        if (bridgeDrag) {
+          bridgeDrag.b = a;
+        } else if (giftTap) {
+          // rien : le rond-point se pose au relâchement
+        } else if (sim.stroke) {
           sim.moveStroke(a.x, a.y);
         } else if (cursorOffset) {
           // avec le curseur décalé, on peut aussi démarrer en glissant le curseur sur un bâtiment
@@ -1192,10 +1438,40 @@ export function createPlayScreen(game) {
         if (pressed) {
           const b = pressed;
           pressed = null;
+          if (b.slot !== undefined) {
+            const g = sim.gifts[b.slot];
+            const gh = ghost;
+            ghost = null;
+            slotDown = null;
+            if (gh) {
+              if (type === "up" && g && gh.y < bar.y) tryRoundabout(b.slot, gh);
+            } else if (type === "up" && g && inRect(b, x, y)) {
+              armedId = armedId === g.id ? 0 : g.id; // toucher un cadeau : le préparer (ou le ranger)
+            }
+            return;
+          }
           if (type === "up" && inRect(b, x, y)) {
             if (b.id === "pause") pauseGame();
             else if (b.id === "undo") sim.undo();
           }
+          return;
+        }
+        if (bridgeDrag) {
+          const d = bridgeDrag;
+          bridgeDrag = null;
+          finger = null;
+          const idx = armedIndex();
+          if (type === "up" && idx >= 0 && Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y) > cfg.roads.tap_slop_px) {
+            const r = sim.placeBridge(idx, d.a, d.b);
+            if (!r.ok && r.reason !== "none") toast(`gift.err.${r.reason}`);
+            if (armedIndex() < 0) armedId = 0;
+          }
+          return;
+        }
+        if (giftTap) {
+          giftTap = false;
+          finger = null;
+          if (type === "up") tryRoundabout(armedIndex(), aim(x, y));
           return;
         }
         const quick = type === "up" && startedAtDown && performance.now() - downAt < cfg.input.tap_max_ms;

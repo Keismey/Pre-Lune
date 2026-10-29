@@ -1,6 +1,6 @@
 {
   "game": {
-    "version": "0.5.1"
+    "version": "0.6.0"
   },
   "world": {
     "width": 1080,
@@ -485,12 +485,75 @@
         "bar_gap": 18
       },
       "undo": {
-        "w": 330,
-        "font": 48,
+        "w": 132,
+        "icon": 46,
+        "icon_w": 12,
         "bar_h": 10,
-        "bar_inset": 34,
-        "bar_gap": 16,
+        "bar_inset": 24,
+        "bar_gap": 14,
         "disabled_alpha": 0.38
+      },
+      "gifts": {
+        "margin": 24,
+        "gap": 18,
+        "slot": 132,
+        "radius": 28,
+        "empty_alpha": 0.4,
+        "empty_dash": [14, 12],
+        "icon": 84,
+        "count_font": 40,
+        "count_dx": 20,
+        "count_dy": 26,
+        "drag_alpha": 0.85,
+        "hint_ring_r": 64,
+        "hint_ring_w": 8,
+        "hint_pulse_s": 1.1,
+        "ghost_r": 56,
+        "bridge_ok": "#ffd166",
+        "bridge_bad": "#ff6b6b",
+        "bridge_preview_w": 14,
+        "deck_w": 1.5,
+        "deck_edge": "#5a3b2a",
+        "deck_fill": "#c99a62",
+        "rail": "#3a2417",
+        "rail_w": 7,
+        "rail_off": 0.68,
+        "shade": "rgba(20, 10, 40, 0.32)",
+        "shade_dy": 12,
+        "ring_r": 1.25,
+        "ring_edge_w": 5,
+        "plank_px": 16,
+        "toast_s": 3,
+        "ring_edge": "#5a3b2a",
+        "island": "#8fcf6b",
+        "island_edge": "#3d7a2e",
+        "island_r": 0.42,
+        "choice": {
+          "title_y": 300,
+          "title_font": 84,
+          "sub_y": 400,
+          "sub_font": 44,
+          "card_w": 900,
+          "card_h": 232,
+          "card_gap": 28,
+          "first_y": 500,
+          "card_radius": 36,
+          "card_bg": "#5b4392",
+          "card_hi": "#ffd166",
+          "icon_box": 168,
+          "name_font": 58,
+          "desc_font": 38,
+          "rarity_font": 32,
+          "text_pad": 40,
+          "rarity_colors": { "common": "#b8e6a0", "uncommon": "#8fd0ff", "rare": "#ffb86b" },
+          "btn_w": 520,
+          "btn_h": 120,
+          "btn_font": 52,
+          "btn_gap": 30,
+          "prompt_y": 1440,
+          "prompt_font": 46,
+          "prompt_w": 900
+        }
       },
       "assist": {
         "tint": "rgba(120, 160, 255, 0.10)",
@@ -553,6 +616,25 @@
         "y_bottom": 1610,
         "clear": 24
       }
+    }
+  },
+  "gifts": {
+    "slots": 6,
+    "offers": 3,
+    "rerolls": 1,
+    "pick_px": 70,
+    "roundabout_capacity": 2,
+    "bridge_max_cells": 4,
+    "bridge_min_px": 60,
+    "kinds": {
+      "sack": { "weight": 24, "rarity": "common", "instant": true, "tiles": 20, "enabled": true },
+      "roundabout": { "weight": 22, "rarity": "common", "uses": 1, "enabled": true },
+      "bridge": { "weight": 18, "rarity": "common", "uses": 2, "enabled": true },
+      "lantern": { "weight": 12, "rarity": "uncommon", "uses": 1, "enabled": false },
+      "gold": { "weight": 10, "rarity": "uncommon", "uses": 1, "enabled": false },
+      "tunnel": { "weight": 6, "rarity": "rare", "uses": 1, "enabled": false },
+      "bell": { "weight": 4, "rarity": "rare", "uses": 1, "enabled": false },
+      "workshop": { "weight": 4, "rarity": "rare", "uses": 1, "enabled": false }
     }
   },
   "comfort": {

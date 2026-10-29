@@ -133,6 +133,7 @@ export function createSim(cfg, layout, seed, saved = null) {
   const TL = cfg.tiles;
   const D = cfg.days;
   const CF = cfg.comfort;
+  const G = cfg.gifts;
   const popupLife = cfg.ui.play.popup.life_s;
   const hz = cfg.loop.sim_hz;
   const dt = 1 / hz;
@@ -179,7 +180,11 @@ export function createSim(cfg, layout, seed, saved = null) {
     seed,
     undoState: null, // { snap, tilesAfter, left, total } : la dernière action, annulable pendant comfort.undo_s
     eraseCount: 0, // nombre d'effacements réussis (le tutoriel s'en sert)
+    gifts: [], // barre de cadeaux : { id, kind, left (poses restantes) }, G.slots au plus
+    rerollsLeft: G.rerolls, // relances restantes dans la partie
+    choice: null, // fin de journée : { offers: [type, ...] } tant que le joueur n'a pas pris un cadeau (le jeu est en pause)
   };
+  let giftSeq = 1;
 
   let dirty = false; // le réseau a changé : champ de distance à recalculer
 
@@ -337,12 +342,34 @@ export function createSim(cfg, layout, seed, saved = null) {
       sim.tiles = Math.min(TL.cap, sim.tiles + TL.per_day);
       sim.gainFx = { n: Math.round(sim.tiles - before), age: 0 };
     }
+    // pause de fin de journée : 3 cadeaux tirés par le flux « cadeaux » ; le jeu repart quand le joueur en a pris un
+    sim.undoState = null;
+    sim.choice = { offers: drawOffers() };
+  }
+
+  const enabledKinds = () => Object.entries(G.kinds).filter(([, k]) => k.enabled);
+
+  // Tirage pondéré sans remise (poids de balance.json, un seul flux : les décisions du joueur ne le décalent pas).
+  function drawOffers() {
+    const pool = enabledKinds().map(([id, k]) => ({ id, w: k.weight }));
+    const out = [];
+    while (out.length < G.offers && pool.length) {
+      const total = pool.reduce((sum, p) => sum + p.w, 0);
+      let r = streams.cadeaux.next() * total;
+      let i = 0;
+      while (i < pool.length - 1 && r >= pool[i].w) {
+        r -= pool[i].w;
+        i++;
+      }
+      out.push(pool.splice(i, 1)[0].id);
+    }
+    return out;
   }
 
   // ---------- Réseau : nœuds, arêtes, portes ----------
 
   function addNode(x, y, door = 0) {
-    const n = { id: nodeSeq++, x, y, door, adj: [] };
+    const n = { id: nodeSeq++, x, y, door, rb: false, adj: [] };
     nodes.set(n.id, n);
     return n;
   }
@@ -433,10 +460,11 @@ export function createSim(cfg, layout, seed, saved = null) {
   }
 
   // Chemin le plus proche d'un point du monde (nœud ou arête), à touch_px près au plus.
-  function nearestRoad(x, y) {
+  function nearestRoad(x, y, skipBridges = false) {
     let best = null;
     let bestD = R.touch_px;
     for (const e of edges.values()) {
+      if (skipBridges && e.bridge) continue;
       const a = nodes.get(e.a);
       const b = nodes.get(e.b);
       const q = nearestOnSeg(x, y, a.x, a.y, b.x, b.y);
@@ -552,7 +580,7 @@ export function createSim(cfg, layout, seed, saved = null) {
     let edgeD = R.snap_px;
     let pt = null;
     for (const e of edges.values()) {
-      if (s.own.has(e.id) || mine.has(e.a) || mine.has(e.b)) continue;
+      if (e.bridge || s.own.has(e.id) || mine.has(e.a) || mine.has(e.b)) continue; // on ne se raccorde pas au milieu d'un pont
       const a = nodes.get(e.a);
       const b = nodes.get(e.b);
       const q = nearestOnSeg(p.x, p.y, a.x, a.y, b.x, b.y);
@@ -569,7 +597,7 @@ export function createSim(cfg, layout, seed, saved = null) {
   function findCrossings(head, q, s, skipEdge) {
     const out = [];
     for (const e of edges.values()) {
-      if (s.own.has(e.id) || (skipEdge && e.id === skipEdge.id)) continue;
+      if (e.bridge || s.own.has(e.id) || (skipEdge && e.id === skipEdge.id)) continue; // un pont se franchit sans croisement
       if (e.a === head.id || e.b === head.id) continue;
       const a = nodes.get(e.a);
       const b = nodes.get(e.b);
@@ -691,6 +719,7 @@ export function createSim(cfg, layout, seed, saved = null) {
     if (s.headId) return true;
     if (s.kind === "path") {
       const p = s.pending;
+      if (!p.node && edges.get(p.edge).bridge) return false; // on ne part pas du milieu d'un pont (un toucher bref l'efface)
       const n = p.node ? nodes.get(p.node) : splitEdge(edges.get(p.edge), p.x, p.y);
       s.headId = n.id;
       s.stack.push({ id: n.id, edge: null, nodeNew: false });
@@ -757,7 +786,7 @@ export function createSim(cfg, layout, seed, saved = null) {
 
   // Début d'un geste : sur un chemin existant (embranchement), ou sur un bâtiment (zone d'appui élargie).
   sim.beginStroke = function (x, y, buildingsOnly = false) {
-    if (sim.stroke) return false;
+    if (sim.stroke || sim.choice) return false;
     let s = null;
     const road = buildingsOnly ? null : nearestRoad(x, y);
     if (road) {
@@ -852,14 +881,16 @@ export function createSim(cfg, layout, seed, saved = null) {
 
   let pendingSnap = null; // état du réseau avant le geste en cours
 
-  const graphSig = () => `${[...nodes.keys()].sort((m, n) => m - n).join(",")}|${[...edges.keys()].sort((m, n) => m - n).join(",")}`;
+  const graphSig = () =>
+    `${[...nodes.values()].map((n) => n.id + (n.rb ? "r" : "")).sort().join(",")}|${[...edges.values()].map((e) => e.id + (e.bridge ? "b" : "")).sort().join(",")}`;
 
   function takeSnapshot() {
     return {
       sig: graphSig(),
       tiles: sim.tiles,
-      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door })),
-      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, placedAt: e.placedAt })),
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, placedAt: e.placedAt, bridge: !!e.bridge })),
+      gifts: sim.gifts.map((g) => ({ ...g })),
     };
   }
 
@@ -867,12 +898,12 @@ export function createSim(cfg, layout, seed, saved = null) {
   function loadGraph(ns, es) {
     nodes.clear();
     edges.clear();
-    for (const n of ns) nodes.set(n.id, { id: n.id, x: n.x, y: n.y, door: n.door, adj: [] });
+    for (const n of ns) nodes.set(n.id, { id: n.id, x: n.x, y: n.y, door: n.door, rb: !!n.rb, adj: [] });
     for (const e of es) {
       const a = nodes.get(e.a);
       const b = nodes.get(e.b);
       if (!a || !b) continue;
-      edges.set(e.id, { id: e.id, a: e.a, b: e.b, len: Math.hypot(b.x - a.x, b.y - a.y), placedAt: e.placedAt });
+      edges.set(e.id, { id: e.id, a: e.a, b: e.b, len: Math.hypot(b.x - a.x, b.y - a.y), placedAt: e.placedAt, bridge: !!e.bridge });
       a.adj.push({ to: b.id, edge: e.id });
       b.adj.push({ to: a.id, edge: e.id });
     }
@@ -892,13 +923,146 @@ export function createSim(cfg, layout, seed, saved = null) {
   // Annule la dernière action. Les créatures dont la route a disparu retournent dans la file de leur chaumière.
   sim.undo = function () {
     const u = sim.undoState;
-    if (!u || sim.stroke || sim.over) return false;
+    if (!u || sim.stroke || sim.over || sim.choice) return false;
     sim.undoState = null;
     loadGraph(u.snap.nodes, u.snap.edges);
+    sim.gifts = u.snap.gifts.map((g) => ({ ...g }));
     sim.tiles += u.snap.tiles - u.tilesAfter; // un gain de fin de journée arrivé entre-temps est conservé
     dropLostCreatures();
     flush();
     return true;
+  };
+
+  // ---------- Cadeaux : choix de fin de journée, barre, pose ----------
+
+  sim.canReroll = () => !!sim.choice && sim.rerollsLeft > 0 && enabledKinds().length > G.offers;
+
+  // Relance (une par partie) : trois nouvelles propositions.
+  sim.rerollGifts = function () {
+    if (!sim.canReroll()) return false;
+    sim.rerollsLeft--;
+    sim.choice = { offers: drawOffers() };
+    return true;
+  };
+
+  sim.giftsFull = () => sim.gifts.length >= G.slots;
+
+  // Le joueur prend la proposition n° index. Le sac de dalles agit tout de suite ; les autres cadeaux vont dans la barre :
+  // si elle est pleine, il faut dire quel emplacement jeter (discard). Renvoie { ok, reason }.
+  sim.pickGift = function (index, discard = null) {
+    const c = sim.choice;
+    if (!c || index < 0 || index >= c.offers.length) return { ok: false, reason: "none" };
+    const kind = c.offers[index];
+    const def = G.kinds[kind];
+    if (def.instant) {
+      sim.tiles += def.tiles; // le plafond ne limite que le gain automatique de fin de journée
+      sim.gainFx = { n: def.tiles, age: 0 };
+    } else {
+      if (sim.giftsFull()) {
+        if (discard === null || !sim.gifts[discard]) return { ok: false, reason: "full" };
+        sim.gifts.splice(discard, 1);
+      }
+      sim.gifts.push({ id: giftSeq++, kind, left: def.uses });
+    }
+    sim.choice = null;
+    return { ok: true };
+  };
+
+  // Une pose consomme une utilisation du cadeau ; la dernière le retire de la barre.
+  function useGift(slot) {
+    const g = sim.gifts[slot];
+    if (--g.left <= 0) sim.gifts.splice(slot, 1);
+  }
+
+  // La pose d'un cadeau est une action annulable comme un tracé : l'état d'avant est celui du réseau et de la barre.
+  function commitGiftUndo(snap) {
+    const total = ticks(CF.undo_s);
+    sim.undoState = { snap, tilesAfter: sim.tiles, left: total, total };
+  }
+
+  // Croisement (3 chemins ou plus, hors porte) le plus proche du point, à pick_px près.
+  function junctionNear(x, y) {
+    let best = null;
+    let bestD = G.pick_px;
+    for (const n of nodes.values()) {
+      if (!isJunction(n.id)) continue;
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    return best;
+  }
+
+  // Rond-point : 2 créatures en même temps sur ce croisement. Renvoie { ok, reason }.
+  sim.placeRoundabout = function (slot, x, y) {
+    const g = sim.gifts[slot];
+    if (!g || g.kind !== "roundabout" || sim.stroke || sim.choice || sim.over) return { ok: false, reason: "none" };
+    const n = junctionNear(x, y);
+    if (!n) return { ok: false, reason: "no_junction" };
+    if (n.rb) return { ok: false, reason: "already" };
+    const snap = takeSnapshot();
+    n.rb = true;
+    sim.graphVersion++;
+    useGift(slot);
+    commitGiftUndo(snap);
+    return { ok: true, x: n.x, y: n.y };
+  };
+
+  // Extrémité d'un pont : un nœud proche, ou un point d'une arête (coupée à la pose). Jamais sur un autre pont.
+  function bridgeEnd(p) {
+    const road = nearestRoad(p.x, p.y, true);
+    if (!road) return null;
+    if (road.node) return { node: nodes.get(road.node), x: nodes.get(road.node).x, y: nodes.get(road.node).y };
+    return { edge: edges.get(road.edge), x: road.x, y: road.y };
+  }
+
+  // Étudie un pont de a à b sans rien changer : { A, B, len } ou { reason }.
+  sim.planBridge = function (a, b) {
+    const A = bridgeEnd(a);
+    const B = bridgeEnd(b);
+    if (!A || !B) return { reason: "ends" };
+    if ((A.node && B.node && A.node.id === B.node.id) || (A.edge && B.edge && A.edge.id === B.edge.id)) return { reason: "ends" };
+    const len = Math.hypot(B.x - A.x, B.y - A.y);
+    if (len < G.bridge_min_px) return { reason: "short" };
+    if (len > G.bridge_max_cells * cell) return { reason: "long" };
+    if ((A.node && !nodeCanTakeEdge(A.node)) || (B.node && !nodeCanTakeEdge(B.node))) return { reason: "doors" };
+    if (A.node && B.node && edgeBetween(A.node.id, B.node.id)) return { reason: "ends" };
+    if (segBlocked(A.x, A.y, B.x, B.y)) return { reason: "blocked" };
+    let crossed = 0;
+    for (const e of edges.values()) {
+      if (e.bridge) continue;
+      if ((A.edge && e.id === A.edge.id) || (B.edge && e.id === B.edge.id)) continue;
+      if ((A.node && (e.a === A.node.id || e.b === A.node.id)) || (B.node && (e.a === B.node.id || e.b === B.node.id))) continue;
+      const na = nodes.get(e.a);
+      const nb = nodes.get(e.b);
+      if (segCross(A.x, A.y, B.x, B.y, na.x, na.y, nb.x, nb.y)) crossed++;
+    }
+    if (!crossed) return { reason: "cross" };
+    if (sim.tiles + 1e-9 < costOf(len)) return { reason: "tiles" };
+    return { A, B, len };
+  };
+
+  // Pont : un chemin qui passe par-dessus les autres, sans croisement. Il coûte des dalles comme un chemin.
+  sim.placeBridge = function (slot, a, b) {
+    const g = sim.gifts[slot];
+    if (!g || g.kind !== "bridge" || sim.stroke || sim.choice || sim.over) return { ok: false, reason: "none" };
+    const plan = sim.planBridge(a, b);
+    if (!plan.A) {
+      if (plan.reason === "tiles") sim.noTilesFlash = TL.flash_s;
+      return { ok: false, reason: plan.reason };
+    }
+    const snap = takeSnapshot();
+    const NA = plan.A.node || splitEdge(plan.A.edge, plan.A.x, plan.A.y);
+    const NB = plan.B.node || splitEdge(plan.B.edge, plan.B.x, plan.B.y);
+    const e = addEdge(NA, NB);
+    e.bridge = true;
+    sim.tiles -= costOf(e.len);
+    useGift(slot);
+    flush();
+    commitGiftUndo(snap);
+    return { ok: true };
   };
 
   // Une chaumière a-t-elle une route vers un atelier de sa couleur ?
@@ -925,6 +1089,10 @@ export function createSim(cfg, layout, seed, saved = null) {
       nextId: sim.nextId,
       nodeSeq,
       edgeSeq,
+      gifts: sim.gifts.map((g) => ({ ...g })),
+      giftSeq,
+      rerollsLeft: sim.rerollsLeft,
+      choice: sim.choice ? { offers: [...sim.choice.offers] } : null,
       rng: Object.fromEntries(Object.entries(streams).map(([k, r]) => [k, r.getState()])),
       fired: events.map((e) => e.fired),
       panic: { active: sim.panic.active, left: sim.panic.left },
@@ -941,8 +1109,8 @@ export function createSim(cfg, layout, seed, saved = null) {
         over: b.over,
       })),
       sites: sim.sites.map((s) => ({ id: s.id, kind: s.kind, color: s.color, c: s.c, r: s.r, left: s.left, total: s.total })),
-      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door })),
-      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b })),
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb ? 1 : 0 })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, bridge: e.bridge ? 1 : 0 })),
     };
   };
 
@@ -955,6 +1123,10 @@ export function createSim(cfg, layout, seed, saved = null) {
     sim.produced = d.produced;
     nodeSeq = d.nodeSeq;
     edgeSeq = d.edgeSeq;
+    sim.gifts = Array.isArray(d.gifts) ? d.gifts.map((g) => ({ ...g })) : [];
+    giftSeq = d.giftSeq || 1 + sim.gifts.reduce((m, g) => Math.max(m, g.id), 0);
+    sim.rerollsLeft = d.rerollsLeft === undefined ? G.rerolls : d.rerollsLeft;
+    sim.choice = d.choice ? { offers: [...d.choice.offers] } : null;
     for (const [k, v] of Object.entries(d.rng || {})) if (streams[k]) streams[k].setState(v);
     if (Array.isArray(d.fired) && d.fired.length === events.length) events.forEach((e, i) => (e.fired = !!d.fired[i]));
     else for (const e of events) e.fired = e.day < d.day;
@@ -1077,7 +1249,7 @@ export function createSim(cfg, layout, seed, saved = null) {
 
   // Croisements : file d'arrivée par nœud, premier arrivé premier servi, une créature à la fois (cross_s de verrou).
   const jq = new Map(); // nœud → créatures arrêtées à la ligne d'arrêt, dans l'ordre d'arrivée
-  const jbusy = new Map(); // nœud → pas jusqu'auquel le croisement est occupé
+  const jbusy = new Map(); // nœud → pas jusqu'auxquels ses places sont occupées
 
   function requestEntry(cr) {
     if (cr.inQueue === cr.next) return;
@@ -1099,7 +1271,10 @@ export function createSim(cfg, layout, seed, saved = null) {
         jq.delete(nid);
         continue;
       }
-      if (!q.length || (jbusy.get(nid) || 0) > sim.tick) continue;
+      // places occupées du croisement (une seule ; deux sur un rond-point), chacune libre au bout de cross_s
+      const busy = (jbusy.get(nid) || []).filter((until) => until > sim.tick);
+      jbusy.set(nid, busy);
+      if (!q.length || busy.length >= (nodes.get(nid).rb ? G.roundabout_capacity : 1)) continue;
       const head = q[0];
       let clear = true;
       const nxt = chooseNext(nid, head.color);
@@ -1113,7 +1288,7 @@ export function createSim(cfg, layout, seed, saved = null) {
         head.inQueue = 0;
         head.granted = nid;
         head.wait = 0;
-        jbusy.set(nid, sim.tick + crossTicks);
+        busy.push(sim.tick + crossTicks);
       }
     }
   }
@@ -1310,7 +1485,7 @@ export function createSim(cfg, layout, seed, saved = null) {
   // ---------- Pas de simulation ----------
 
   sim.step = function () {
-    if (sim.over) return;
+    if (sim.over || sim.choice) return; // brume tombée, ou pause de fin de journée (choix du cadeau)
     sim.tick++;
     sim.noTilesFlash = Math.max(0, sim.noTilesFlash - dt);
 
