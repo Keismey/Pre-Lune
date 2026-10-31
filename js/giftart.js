@@ -64,11 +64,101 @@ export function drawGiftIcon(ctx, kind, cx, cy, size, color, dark) {
     ctx.moveTo(cx, cy - r * 0.01);
     ctx.lineTo(cx, cy + r * 0.51);
     ctx.stroke();
+  } else if (kind === "lantern") {
+    // lanterne : anneau, toit, cage avec une flamme
+    ctx.beginPath();
+    ctx.arc(cx, cy - r * 0.92, r * 0.16, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.55, cy - r * 0.55);
+    ctx.lineTo(cx, cy - r * 0.8);
+    ctx.lineTo(cx + r * 0.55, cy - r * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.5, cy - r * 0.45);
+    ctx.lineTo(cx - r * 0.5, cy + r * 0.55);
+    ctx.lineTo(cx + r * 0.5, cy + r * 0.55);
+    ctx.lineTo(cx + r * 0.5, cy - r * 0.45);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r * 0.3);
+    ctx.quadraticCurveTo(cx + r * 0.28, cy + r * 0.05, cx, cy + r * 0.38);
+    ctx.quadraticCurveTo(cx - r * 0.28, cy + r * 0.05, cx, cy - r * 0.3);
+    ctx.fill();
+  } else if (kind === "gold") {
+    // chemin doré : un chemin qui serpente avec une étincelle
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.9, cy + r * 0.6);
+    ctx.bezierCurveTo(cx - r * 0.2, cy + r * 0.7, cx - r * 0.5, cy - r * 0.2, cx + r * 0.2, cy - r * 0.1);
+    ctx.bezierCurveTo(cx + r * 0.5, cy - r * 0.05, cx + r * 0.5, cy - r * 0.4, cx + r * 0.8, cy - r * 0.55);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + r * 0.62, cy + r * 0.5);
+    ctx.lineTo(cx + r * 0.72, cy + r * 0.22);
+    ctx.lineTo(cx + r * 0.98, cy + r * 0.12);
+    ctx.lineTo(cx + r * 0.72, cy + r * 0.02);
+    ctx.lineTo(cx + r * 0.62, cy - r * 0.26);
+    ctx.lineTo(cx + r * 0.52, cy + r * 0.02);
+    ctx.lineTo(cx + r * 0.26, cy + r * 0.12);
+    ctx.lineTo(cx + r * 0.52, cy + r * 0.22);
+    ctx.closePath();
+    ctx.fill();
   } else {
     ctx.beginPath();
     ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+// Feu de lanterne posé sur un croisement : une lanterne au centre et, sur chaque branche, un signal : rond vert quand
+// l'axe passe (il clignote juste avant de s'éteindre), barre rouge en travers du chemin quand il attend.
+export function drawLamp(ctx, n, info, roadW, G, tickF) {
+  ctx.save();
+  ctx.lineCap = "round";
+  const blink = info.phase > G.lamp_blink_from && Math.floor(tickF / G.lamp_blink_ticks) % 2 === 0;
+  for (const a of info.arms) {
+    const len = Math.hypot(a.dx, a.dy) || 1;
+    const d = Math.min(G.lamp_dist, len * 0.55);
+    const px = n.x + (a.dx / len) * d;
+    const py = n.y + (a.dy / len) * d;
+    if (a.axis === info.green) {
+      ctx.globalAlpha = blink ? 0.35 : 1;
+      ctx.fillStyle = G.lamp_go;
+      ctx.strokeStyle = G.lamp_post;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(px, py, G.lamp_dot_r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = 1;
+      const nx = -a.dy / len;
+      const ny = a.dx / len;
+      const hw = roadW * 0.42;
+      ctx.strokeStyle = G.lamp_post;
+      ctx.lineWidth = G.lamp_bar_w + 5;
+      ctx.beginPath();
+      ctx.moveTo(px + nx * hw, py + ny * hw);
+      ctx.lineTo(px - nx * hw, py - ny * hw);
+      ctx.stroke();
+      ctx.strokeStyle = G.lamp_stop;
+      ctx.lineWidth = G.lamp_bar_w;
+      ctx.beginPath();
+      ctx.moveTo(px + nx * hw, py + ny * hw);
+      ctx.lineTo(px - nx * hw, py - ny * hw);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = G.lamp_glow;
+  ctx.strokeStyle = G.lamp_post;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(n.x, n.y, G.lamp_post_r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 }
 

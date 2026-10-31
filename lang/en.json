@@ -59,5 +59,13 @@
   "gift.err.doors": "A building can only have 3 paths.",
   "gift.err.blocked": "A building is in the bridge's way.",
   "gift.err.cross": "The bridge must go over a path.",
-  "gift.err.tiles": "Not enough tiles for this bridge."
+  "gift.err.tiles": "Not enough tiles for this bridge.",
+  "gift.lantern.name": "Lantern light",
+  "gift.lantern.desc": "On a crossing: the two axes take turns.",
+  "gift.gold.name": "Golden path",
+  "gift.gold.desc": "8 cells of path, speed ×1.5 forever.",
+  "gift.hint.lantern": "Tap a crossing to place the light. Tap the gift again to put it away.",
+  "gift.hint.gold": "Tap a path, or drag along a path, to gild it (8 cells at most).",
+  "gift.err.gold_already": "This path is already golden.",
+  "gift.err.far": "These two points are not linked by a path."
 }

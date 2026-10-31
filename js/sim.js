@@ -134,12 +134,18 @@ export function createSim(cfg, layout, seed, saved = null) {
   const D = cfg.days;
   const CF = cfg.comfort;
   const G = cfg.gifts;
+  const SPC = cfg.species;
   const popupLife = cfg.ui.play.popup.life_s;
   const hz = cfg.loop.sim_hz;
   const dt = 1 / hz;
   const ticks = (s) => Math.round(s * hz); // les journées et les chantiers se comptent en pas entiers : exact et déterministe
   const streams = createStreams(seed, cfg.rng.streams);
   const unit = B.size * cell; // côté d'un bâtiment
+  // vitesse (px/s) et taille d'une créature de cette couleur (réglage creatures.uniform_speeds : tout le monde à la vitesse de base)
+  const speciesOf = (color) => {
+    const sp = SPC[color] || { speed_cells_per_s: CR.speed_cells_per_s, size: CR.size };
+    return { speed: (CR.uniform_speeds ? CR.speed_cells_per_s : sp.speed_cells_per_s) * cell, size: sp.size };
+  };
   const costOf = (len) => (len / cell) * TL.cost_per_cell; // 1 dalle par 54 px de chemin
   const gapPx = (cr) => T.gap_cells * cell * cr.size; // écart entre deux créatures : 0,7 case × taille
   const crossTicks = ticks(T.cross_s);
@@ -295,6 +301,7 @@ export function createSim(cfg, layout, seed, saved = null) {
   // Choisit l'emplacement d'un bâtiment : exactement 1 tirage du flux « apparitions », quoi qu'il arrive. Si la case
   // tirée est occupée par un chemin, on prend la suivante de la liste (seule exception à l'indépendance des flux).
   function place(kind, color, instant) {
+    if (sim.buildings.length + sim.sites.length >= B.cap) return false; // plafond de bâtiments de la carte
     const list = candidateSpots(kind, color);
     if (!list.length) return false;
     const start = streams.apparitions.int(list.length);
@@ -316,11 +323,31 @@ export function createSim(cfg, layout, seed, saved = null) {
     return { day: e.day, color: e.color, kinds: e.kinds, instant: start < 0, fireTick: start < 0 ? at : start, fired: false };
   });
 
+  // Journées 8 et suivantes : un bâtiment de plus à extra.at_s (70 % chaumière, 30 % atelier), en respectant la règle de
+  // proportion (au plus 3 chaumières par atelier de la même couleur). Trois tirages du flux « apparitions », toujours les mêmes.
+  const extraFire = ticks(D.extra.at_s) - ticks(B.site_s);
+  let extraDay = 0; // dernière journée où le bâtiment du jour a été lancé
+
+  function placeExtra() {
+    const all = sim.buildings.concat(sim.sites);
+    const colors = [...new Set(all.map((b) => b.color))].sort();
+    const count = (color, kind) => all.filter((b) => b.color === color && b.kind === kind).length;
+    const wantHouse = streams.apparitions.next() < D.extra.house_share;
+    const okHouse = colors.filter((c) => count(c, "house") < D.extra.max_houses_per_workshop * count(c, "workshop"));
+    const kind = wantHouse && okHouse.length ? "house" : "workshop";
+    const pool = kind === "house" ? okHouse : colors;
+    place(kind, pool[streams.apparitions.int(pool.length)], false);
+  }
+
   function runSchedule() {
     for (const e of events) {
       if (e.fired || e.day !== sim.day || sim.dayTick < e.fireTick) continue;
       e.fired = true;
       for (const kind of e.kinds) place(kind, e.color, e.instant); // chaumière d'abord : l'atelier se place par rapport à elle
+    }
+    if (sim.day >= D.extra.from_day && extraDay < sim.day && sim.dayTick >= extraFire) {
+      extraDay = sim.day;
+      placeExtra();
     }
   }
 
@@ -369,7 +396,7 @@ export function createSim(cfg, layout, seed, saved = null) {
   // ---------- Réseau : nœuds, arêtes, portes ----------
 
   function addNode(x, y, door = 0) {
-    const n = { id: nodeSeq++, x, y, door, rb: false, adj: [] };
+    const n = { id: nodeSeq++, x, y, door, rb: false, lamp: false, adj: [] };
     nodes.set(n.id, n);
     return n;
   }
@@ -441,8 +468,8 @@ export function createSim(cfg, layout, seed, saved = null) {
     const b = nodes.get(e.b);
     const X = addNode(x, y);
     removeEdgeRaw(e);
-    addEdge(a, X, e.placedAt);
-    addEdge(X, b, e.placedAt);
+    addEdge(a, X, e.placedAt).gold = !!e.gold; // le chemin doré reste doré des deux côtés de la coupure
+    addEdge(X, b, e.placedAt).gold = !!e.gold;
     for (const cr of sim.creatures) {
       if (cr.stage !== "walk" || !cr.next || cr.node === null) continue;
       const onEdge = (cr.node === a.id && cr.next === b.id) || (cr.node === b.id && cr.next === a.id);
@@ -882,14 +909,14 @@ export function createSim(cfg, layout, seed, saved = null) {
   let pendingSnap = null; // état du réseau avant le geste en cours
 
   const graphSig = () =>
-    `${[...nodes.values()].map((n) => n.id + (n.rb ? "r" : "")).sort().join(",")}|${[...edges.values()].map((e) => e.id + (e.bridge ? "b" : "")).sort().join(",")}`;
+    `${[...nodes.values()].map((n) => n.id + (n.rb ? "r" : "") + (n.lamp ? "l" : "")).sort().join(",")}|${[...edges.values()].map((e) => e.id + (e.bridge ? "b" : "") + (e.gold ? "g" : "")).sort().join(",")}`;
 
   function takeSnapshot() {
     return {
       sig: graphSig(),
       tiles: sim.tiles,
-      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb })),
-      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, placedAt: e.placedAt, bridge: !!e.bridge })),
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb, lamp: n.lamp })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, placedAt: e.placedAt, bridge: !!e.bridge, gold: !!e.gold })),
       gifts: sim.gifts.map((g) => ({ ...g })),
     };
   }
@@ -898,12 +925,12 @@ export function createSim(cfg, layout, seed, saved = null) {
   function loadGraph(ns, es) {
     nodes.clear();
     edges.clear();
-    for (const n of ns) nodes.set(n.id, { id: n.id, x: n.x, y: n.y, door: n.door, rb: !!n.rb, adj: [] });
+    for (const n of ns) nodes.set(n.id, { id: n.id, x: n.x, y: n.y, door: n.door, rb: !!n.rb, lamp: !!n.lamp, adj: [] });
     for (const e of es) {
       const a = nodes.get(e.a);
       const b = nodes.get(e.b);
       if (!a || !b) continue;
-      edges.set(e.id, { id: e.id, a: e.a, b: e.b, len: Math.hypot(b.x - a.x, b.y - a.y), placedAt: e.placedAt, bridge: !!e.bridge });
+      edges.set(e.id, { id: e.id, a: e.a, b: e.b, len: Math.hypot(b.x - a.x, b.y - a.y), placedAt: e.placedAt, bridge: !!e.bridge, gold: !!e.gold });
       a.adj.push({ to: b.id, edge: e.id });
       b.adj.push({ to: a.id, edge: e.id });
     }
@@ -995,19 +1022,156 @@ export function createSim(cfg, layout, seed, saved = null) {
     return best;
   }
 
-  // Rond-point : 2 créatures en même temps sur ce croisement. Renvoie { ok, reason }.
-  sim.placeRoundabout = function (slot, x, y) {
+  // Cadeaux qui se posent sur un croisement : rond-point (2 créatures à la fois, tour de l'anneau) et feu de lanterne
+  // (les deux axes alternent). Un croisement n'en porte qu'un. Renvoie { ok, reason }.
+  sim.placeJunction = function (slot, x, y) {
     const g = sim.gifts[slot];
-    if (!g || g.kind !== "roundabout" || sim.stroke || sim.choice || sim.over) return { ok: false, reason: "none" };
+    if (!g || (g.kind !== "roundabout" && g.kind !== "lantern") || sim.stroke || sim.choice || sim.over) return { ok: false, reason: "none" };
     const n = junctionNear(x, y);
     if (!n) return { ok: false, reason: "no_junction" };
-    if (n.rb) return { ok: false, reason: "already" };
+    if (n.rb || n.lamp) return { ok: false, reason: "already" };
     const snap = takeSnapshot();
-    n.rb = true;
+    if (g.kind === "roundabout") n.rb = true;
+    else n.lamp = true;
     sim.graphVersion++;
     useGift(slot);
     commitGiftUndo(snap);
     return { ok: true, x: n.x, y: n.y };
+  };
+
+  // ---------- Feu de lanterne ----------
+  // Les chemins du croisement sont rangés en deux axes (le plus petit chemin donne la direction de l'axe 0, ceux à moins
+  // de 45° de cette droite sont de l'axe 0, les autres de l'axe 1). Un axe est vert pendant lantern_phase_s, puis l'autre.
+
+  const lampPhaseTicks = ticks(G.lantern_phase_s);
+  const lampCrossTicks = ticks(G.lantern_cross_s);
+  let axisCache = { version: -1, map: new Map() };
+
+  function lampAxes(nid) {
+    if (axisCache.version !== sim.graphVersion) axisCache = { version: sim.graphVersion, map: new Map() };
+    let out = axisCache.map.get(nid);
+    if (out) return out;
+    const n = nodes.get(nid);
+    const arms = n.adj
+      .slice()
+      .sort((p, q) => p.edge - q.edge)
+      .map((ad) => {
+        const o = nodes.get(ad.to);
+        return { to: ad.to, edge: ad.edge, ang: Math.atan2(o.y - n.y, o.x - n.x), dx: o.x - n.x, dy: o.y - n.y };
+      });
+    const ref = arms.length ? arms[0].ang : 0;
+    for (const a of arms) {
+      const d = Math.abs(mod2pi(a.ang - ref) % Math.PI);
+      a.axis = d < Math.PI / 4 || d > (3 * Math.PI) / 4 ? 0 : 1;
+    }
+    axisCache.map.set(nid, (out = arms));
+    return out;
+  }
+
+  const lampGreen = () => Math.floor(sim.tick / lampPhaseTicks) % 2; // axe qui a le vert à cet instant
+  const axisFrom = (nid, fromId) => {
+    const a = lampAxes(nid).find((x) => x.to === fromId);
+    return a ? a.axis : 0;
+  };
+
+  // Pour l'affichage : branches du feu avec leur axe, axe vert, et fraction écoulée de la phase.
+  sim.lampInfo = (nid) => ({ arms: lampAxes(nid), green: lampGreen(), phase: (sim.tick % lampPhaseTicks) / lampPhaseTicks });
+
+  // ---------- Chemin doré ----------
+  // Des tronçons (arêtes) où la vitesse est multipliée par gold_speed_mult, pour toujours. On suit le chemin existant
+  // depuis le point touché jusqu'au point visé, sur gold_max_cells cases au plus.
+
+  // Un tronçon seul (le doigt ne bouge pas) : on l'étend dans les deux sens, tant que le chemin ne fait que continuer.
+  function growChain(first, maxLen) {
+    let total = first.len;
+    const left = [];
+    const right = [];
+    const side = (e0, nid) => ({ e: e0, n: nid, done: false });
+    const sa = side(first, first.a);
+    const sb = side(first, first.b);
+    const step = (sd, list) => {
+      const nd = nodes.get(sd.n);
+      if (!nd || nd.door || nd.adj.length !== 2) return (sd.done = true);
+      const nx = nd.adj.find((x) => x.edge !== sd.e.id);
+      const e = edges.get(nx.edge);
+      if (!e || total + e.len > maxLen || e === first || list.includes(e)) return (sd.done = true);
+      total += e.len;
+      list.push(e);
+      sd.e = e;
+      sd.n = nx.to;
+      return false;
+    };
+    while (!sa.done || !sb.done) {
+      if (!sa.done) step(sa, left);
+      if (!sb.done) step(sb, right);
+    }
+    return [...left.reverse(), first, ...right];
+  }
+
+  // Chemin le plus court (en arêtes) entre deux tronçons : [e1, ..., e2].
+  function pathBetween(e1, e2) {
+    const dist = new Map([[e1.a, 0], [e1.b, 0]]);
+    const prev = new Map();
+    const heap = makeHeap();
+    heap.push([0, e1.a]);
+    heap.push([0, e1.b]);
+    while (heap.size) {
+      const [dd, id] = heap.pop();
+      if (dd > dist.get(id)) continue;
+      for (const { to, edge } of nodes.get(id).adj) {
+        const nd = dd + edges.get(edge).len;
+        if (!dist.has(to) || nd < dist.get(to) - 1e-9) {
+          dist.set(to, nd);
+          prev.set(to, { from: id, edge });
+          heap.push([nd, to]);
+        }
+      }
+    }
+    const t = [e2.a, e2.b].filter((id) => dist.has(id)).sort((p, q) => dist.get(p) - dist.get(q))[0];
+    if (t === undefined) return null;
+    const mid = [];
+    for (let id = t; prev.has(id); id = prev.get(id).from) mid.unshift(edges.get(prev.get(id).edge));
+    return [e1, ...mid.filter((e) => e !== e1 && e !== e2), e2];
+  }
+
+  // Étudie une pose de chemin doré sans rien changer : { edges, len } ou { reason }.
+  sim.planGold = function (a, b) {
+    const sa = nearestRoad(a.x, a.y);
+    if (!sa) return { reason: "ends" };
+    const first = edges.get(sa.edge);
+    const sb = nearestRoad(b.x, b.y);
+    const maxLen = G.gold_max_cells * cell;
+    let list;
+    if (!sb || sb.edge === sa.edge) {
+      list = growChain(first, maxLen);
+    } else {
+      list = pathBetween(first, edges.get(sb.edge));
+      if (!list) return { reason: "far" };
+      // on garde les tronçons dans l'ordre tant que le total tient dans gold_max_cells cases
+      let acc = 0;
+      const cut = [];
+      for (const e of list) {
+        if (cut.length && acc + e.len > maxLen) break;
+        acc += e.len;
+        cut.push(e);
+      }
+      list = cut;
+    }
+    if (list.every((e) => e.gold)) return { reason: "gold_already" };
+    return { edges: list, len: list.reduce((m, e) => m + e.len, 0) };
+  };
+
+  sim.placeGold = function (slot, a, b) {
+    const g = sim.gifts[slot];
+    if (!g || g.kind !== "gold" || sim.stroke || sim.choice || sim.over) return { ok: false, reason: "none" };
+    const plan = sim.planGold(a, b);
+    if (!plan.edges) return { ok: false, reason: plan.reason };
+    const snap = takeSnapshot();
+    for (const e of plan.edges) e.gold = true;
+    sim.graphVersion++;
+    useGift(slot);
+    commitGiftUndo(snap);
+    return { ok: true };
   };
 
   // Extrémité d'un pont : un nœud proche, ou un point d'une arête (coupée à la pose). Jamais sur un autre pont.
@@ -1091,6 +1255,7 @@ export function createSim(cfg, layout, seed, saved = null) {
       edgeSeq,
       gifts: sim.gifts.map((g) => ({ ...g })),
       giftSeq,
+      extraDay,
       rerollsLeft: sim.rerollsLeft,
       choice: sim.choice ? { offers: [...sim.choice.offers] } : null,
       rng: Object.fromEntries(Object.entries(streams).map(([k, r]) => [k, r.getState()])),
@@ -1109,8 +1274,8 @@ export function createSim(cfg, layout, seed, saved = null) {
         over: b.over,
       })),
       sites: sim.sites.map((s) => ({ id: s.id, kind: s.kind, color: s.color, c: s.c, r: s.r, left: s.left, total: s.total })),
-      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb ? 1 : 0 })),
-      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, bridge: e.bridge ? 1 : 0 })),
+      nodes: [...nodes.values()].map((n) => ({ id: n.id, x: n.x, y: n.y, door: n.door, rb: n.rb ? 1 : 0, lamp: n.lamp ? 1 : 0 })),
+      edges: [...edges.values()].map((e) => ({ id: e.id, a: e.a, b: e.b, bridge: e.bridge ? 1 : 0, gold: e.gold ? 1 : 0 })),
     };
   };
 
@@ -1126,6 +1291,7 @@ export function createSim(cfg, layout, seed, saved = null) {
     sim.gifts = Array.isArray(d.gifts) ? d.gifts.map((g) => ({ ...g })) : [];
     giftSeq = d.giftSeq || 1 + sim.gifts.reduce((m, g) => Math.max(m, g.id), 0);
     sim.rerollsLeft = d.rerollsLeft === undefined ? G.rerolls : d.rerollsLeft;
+    extraDay = d.extraDay === undefined ? (sim.day >= D.extra.from_day ? sim.day - 1 + (sim.dayTick >= extraFire ? 1 : 0) : 0) : d.extraDay;
     sim.choice = d.choice ? { offers: [...d.choice.offers] } : null;
     for (const [k, v] of Object.entries(d.rng || {})) if (streams[k]) streams[k].setState(v);
     if (Array.isArray(d.fired) && d.fired.length === events.length) events.forEach((e, i) => (e.fired = !!d.fired[i]));
@@ -1277,24 +1443,35 @@ export function createSim(cfg, layout, seed, saved = null) {
         continue;
       }
       // places occupées du croisement (une seule ; deux sur un rond-point), chacune libre au bout de cross_s
+      const node = nodes.get(nid);
       const busy = (jbusy.get(nid) || []).filter((until) => until > sim.tick);
       jbusy.set(nid, busy);
-      if (!q.length || busy.length >= (nodes.get(nid).rb ? G.roundabout_capacity : 1)) continue;
-      const head = q[0];
-      let clear = true;
-      const nxt = chooseNext(nid, head.color);
-      if (nxt !== null) {
-        const ad = edgeBetween(nid, nxt);
-        const list = ad ? occEdge.get(occKey(edges.get(ad.edge), nid)) : null;
-        if (list && list.some((o) => o.s < gapPx(head))) clear = false;
+      if (!q.length || busy.length >= (node.rb ? G.roundabout_capacity : 1)) continue;
+      // feu de lanterne : seule une créature de l'axe vert entre (dans l'ordre d'arrivée) ; sinon, la première de la file
+      const green = node.lamp ? lampGreen() : -1;
+      let pick = -1;
+      for (let i = 0; i < (node.lamp ? q.length : 1); i++) {
+        const cr = q[i];
+        if (node.lamp && axisFrom(nid, cr.node) !== green && cr.wait < deadlockTicks) continue;
+        let clear = true;
+        const nxt = chooseNext(nid, cr.color);
+        if (nxt !== null) {
+          const ad = edgeBetween(nid, nxt);
+          const list = ad ? occEdge.get(occKey(edges.get(ad.edge), nid)) : null;
+          if (list && list.some((o) => o.s < gapPx(cr))) clear = false;
+        }
+        if (clear && node.rb && !ringEntryClear(cr, node)) clear = false;
+        if (clear || cr.wait >= deadlockTicks) {
+          pick = i;
+          break;
+        }
       }
-      if (clear && nodes.get(nid).rb && !ringEntryClear(head, nodes.get(nid))) clear = false;
-      if (clear || head.wait >= deadlockTicks) {
-        q.shift();
+      if (pick >= 0) {
+        const head = q.splice(pick, 1)[0];
         head.inQueue = 0;
         head.granted = nid;
         head.wait = 0;
-        busy.push(sim.tick + crossTicks);
+        busy.push(sim.tick + (node.lamp ? lampCrossTicks : crossTicks));
       }
     }
   }
@@ -1321,19 +1498,20 @@ export function createSim(cfg, layout, seed, saved = null) {
     if (house.queue <= 0 || house.cool > 0) return;
     const door = bestDoor(house);
     if (!door) return; // pas de route : la file grossit
-    const g = T.gap_cells * cell * CR.size;
+    const sp = speciesOf(house.color);
+    const g = T.gap_cells * cell * sp.size;
     for (const cr of sim.creatures) {
       if (cr.stage === "enter") continue;
       if (Math.hypot(cr.x - door.x, cr.y - door.y) < g) return; // la porte n'est pas libre
     }
     house.queue--;
-    house.cool = Math.ceil(g / (CR.speed_cells_per_s * cell * dt));
+    house.cool = Math.ceil(g / (sp.speed * dt));
     sim.creatures.push({
       id: sim.nextId++,
       color: house.color,
       home: house.id,
-      size: CR.size,
-      speed: CR.speed_cells_per_s * cell,
+      size: sp.size,
+      speed: sp.speed,
       x: house.x,
       y: house.y,
       px: house.x,
@@ -1590,6 +1768,10 @@ export function createSim(cfg, layout, seed, saved = null) {
   }
 
   function moveCreature(cr, budget) {
+    if (cr.stage === "walk" && cr.node !== null && cr.next !== null && !cr.ring) {
+      const ad = edgeBetween(cr.node, cr.next);
+      if (ad && edges.get(ad.edge).gold) budget *= G.gold_speed_mult; // chemin doré
+    }
     for (let guard = 0; guard < 8 && budget > 1e-9; guard++) {
       if (cr.ring) {
         budget = moveRing(cr, budget);

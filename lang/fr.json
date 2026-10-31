@@ -59,5 +59,13 @@
   "gift.err.doors": "Un bâtiment ne peut avoir que 3 chemins.",
   "gift.err.blocked": "Un bâtiment est sur le passage du pont.",
   "gift.err.cross": "Le pont doit passer par-dessus un chemin.",
-  "gift.err.tiles": "Pas assez de dalles pour ce pont."
+  "gift.err.tiles": "Pas assez de dalles pour ce pont.",
+  "gift.lantern.name": "Feu de lanterne",
+  "gift.lantern.desc": "Sur un croisement : les deux axes passent à tour de rôle.",
+  "gift.gold.name": "Chemin doré",
+  "gift.gold.desc": "8 cases de chemin, vitesse ×1,5 pour toujours.",
+  "gift.hint.lantern": "Touche un croisement pour poser le feu. Retouche le cadeau pour le ranger.",
+  "gift.hint.gold": "Touche un chemin, ou glisse le long d'un chemin, pour le dorer (8 cases au plus).",
+  "gift.err.gold_already": "Ce chemin est déjà doré.",
+  "gift.err.far": "Ces deux points ne sont pas reliés par un chemin."
 }

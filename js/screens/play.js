@@ -10,7 +10,7 @@ import { createSim } from "../sim.js";
 import { createRng } from "../rng.js";
 import { drawText, roundRectPath, wrapLines } from "../draw.js";
 import { drawSprite, drawSymbol, makeGrassPattern, makePathPattern } from "../assets.js";
-import { drawGiftIcon, drawUndoIcon, drawBridge, drawRoundabout } from "../giftart.js";
+import { drawGiftIcon, drawUndoIcon, drawBridge, drawRoundabout, drawLamp } from "../giftart.js";
 
 export function createPlayScreen(game) {
   const { cfg, layout, assets } = game;
@@ -52,8 +52,8 @@ export function createPlayScreen(game) {
   let armedId = 0; // cadeau de la barre prêt à poser (id), 0 si aucun
   let slotDown = null; // doigt posé sur un emplacement : { i, x, y }
   let ghost = null; // rond-point glissé depuis la barre : { x, y }
-  let bridgeDrag = null; // pont en cours : { id, a, b }
-  let giftTap = false; // rond-point prêt : le doigt est posé sur la carte, la pose se fait au relâchement
+  let bridgeDrag = null; // geste de pont ou de chemin doré en cours : { kind, a, b }
+  let giftTap = false; // rond-point ou feu prêt : le doigt est posé sur la carte, la pose se fait au relâchement
   let giftSel = null; // choix de fin de journée : proposition à prendre quand la barre est pleine (n° de proposition)
 
   // ---------- Boutons ----------
@@ -927,6 +927,44 @@ export function createPlayScreen(game) {
     for (const n of sim.nodes.values()) if (n.rb && !n.door && n.adj.length >= 3) drawRoundabout(ctx, n, W0, cfg.gifts.roundabout_radius_px, GF, pathPat, PC.tile);
   }
 
+  // Chemin doré : un liseré doré sur les tronçons concernés ; feux de lanterne : un signal sur chaque branche du croisement.
+  function drawGold(ctx, tickF) {
+    const W0 = cfg.roads.width_px;
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const e of sim.edges.values()) {
+      if (!e.gold) continue;
+      const a = sim.nodes.get(e.a);
+      const b = sim.nodes.get(e.b);
+      ctx.strokeStyle = GF.gold_edge;
+      ctx.lineWidth = W0 - 2 * P.tile_inset + GF.gold_w;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = GF.gold_alpha;
+    for (const e of sim.edges.values()) {
+      if (!e.gold) continue;
+      const a = sim.nodes.get(e.a);
+      const b = sim.nodes.get(e.b);
+      ctx.strokeStyle = GF.gold_fill;
+      ctx.lineWidth = W0 - 2 * P.tile_inset - GF.gold_inset;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawLamps(ctx, tickF) {
+    for (const n of sim.nodes.values()) {
+      if (!n.lamp || n.door || n.adj.length < 3) continue;
+      drawLamp(ctx, n, sim.lampInfo(n.id), cfg.roads.width_px, GF, tickF);
+    }
+  }
+
   // Les tabliers des ponts passent par-dessus tout ce qui est dessiné avant (chemins, créatures qui passent dessous).
   function drawBridges(ctx) {
     const W0 = cfg.roads.width_px;
@@ -936,21 +974,37 @@ export function createPlayScreen(game) {
   // Aides à la pose : anneaux qui pulsent sur les croisements possibles, aperçu du pont, rond-point glissé.
   function drawGiftAim(ctx, tickF) {
     const g = sim.gifts[armedIndex()];
-    if (g && g.kind === "roundabout") {
+    if (g && (g.kind === "roundabout" || g.kind === "lantern")) {
       const k = 0.5 + 0.5 * Math.sin((tickF / hz / GF.hint_pulse_s) * Math.PI * 2);
       ctx.save();
       ctx.strokeStyle = GF.bridge_ok;
       ctx.lineWidth = GF.hint_ring_w;
       ctx.globalAlpha = 0.45 + 0.5 * k;
       for (const n of sim.nodes.values()) {
-        if (n.rb || n.door || n.adj.length < 3) continue;
+        if (n.rb || n.lamp || n.door || n.adj.length < 3) continue;
         ctx.beginPath();
         ctx.arc(n.x, n.y, GF.hint_ring_r * (0.85 + 0.15 * k), 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.restore();
     }
-    if (bridgeDrag) {
+    if (bridgeDrag && bridgeDrag.kind === "gold") {
+      const plan = sim.planGold(bridgeDrag.a, bridgeDrag.b);
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineWidth = cfg.roads.width_px;
+      ctx.strokeStyle = plan.edges ? GF.bridge_ok : GF.bridge_bad;
+      ctx.globalAlpha = 0.6;
+      for (const e of plan.edges || []) {
+        const a = sim.nodes.get(e.a);
+        const b = sim.nodes.get(e.b);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (bridgeDrag) {
       const plan = sim.planBridge(bridgeDrag.a, bridgeDrag.b);
       const pa = plan.A ? plan.A : bridgeDrag.a;
       const pb = plan.A ? plan.B : bridgeDrag.b;
@@ -979,7 +1033,7 @@ export function createPlayScreen(game) {
       ctx.beginPath();
       ctx.arc(ghost.x, ghost.y, GF.ghost_r, 0, Math.PI * 2);
       ctx.fill();
-      drawGiftIcon(ctx, "roundabout", ghost.x, ghost.y, GF.ghost_r * 1.3, C.text_dark, C.text);
+      drawGiftIcon(ctx, ghost.kind, ghost.x, ghost.y, GF.ghost_r * 1.3, C.text_dark, C.text);
       ctx.restore();
     }
   }
@@ -1175,9 +1229,9 @@ export function createPlayScreen(game) {
     saveNow();
   }
 
-  function tryRoundabout(idx, p) {
+  function tryJunction(idx, p) {
     if (idx < 0) return;
-    const r = sim.placeRoundabout(idx, p.x, p.y);
+    const r = sim.placeJunction(idx, p.x, p.y);
     if (!r.ok && r.reason !== "none") toast(`gift.err.${r.reason}`);
     if (armedIndex() < 0) armedId = 0;
   }
@@ -1304,7 +1358,9 @@ export function createPlayScreen(game) {
 
       drawGrass(ctx);
       drawRoads(ctx, tickF);
+      drawGold(ctx, tickF);
       drawSpecials(ctx);
+      drawLamps(ctx, tickF);
       for (const s of sim.sites) drawSite(ctx, s, tickF);
       drawPeekLines(ctx, tickF);
 
@@ -1419,7 +1475,8 @@ export function createPlayScreen(game) {
           // un cadeau est prêt : le geste sur la carte le pose au lieu de tracer
           finger = { x, y };
           const a = aim(x, y);
-          if (sim.gifts[gi].kind === "bridge") bridgeDrag = { a, b: a };
+          const k = sim.gifts[gi].kind;
+          if (k === "bridge" || k === "gold") bridgeDrag = { kind: k, a, b: a };
           else giftTap = true;
           return;
         }
@@ -1432,8 +1489,8 @@ export function createPlayScreen(game) {
         if (pressed) {
           // un rond-point se pose aussi en le glissant depuis la barre (la pastille passe au-dessus du doigt)
           const g = pressed.slot !== undefined ? sim.gifts[pressed.slot] : null;
-          if (g && g.kind === "roundabout" && slotDown && Math.hypot(x - slotDown.x, y - slotDown.y) > cfg.roads.tap_slop_px) {
-            ghost = { x, y: y - cfg.input.cursor_offset_px };
+          if (g && (g.kind === "roundabout" || g.kind === "lantern") && slotDown && Math.hypot(x - slotDown.x, y - slotDown.y) > cfg.roads.tap_slop_px) {
+            ghost = { kind: g.kind, x, y: y - cfg.input.cursor_offset_px };
           }
           return;
         }
@@ -1459,7 +1516,7 @@ export function createPlayScreen(game) {
             ghost = null;
             slotDown = null;
             if (gh) {
-              if (type === "up" && g && gh.y < bar.y) tryRoundabout(b.slot, gh);
+              if (type === "up" && g && gh.y < bar.y) tryJunction(b.slot, gh);
             } else if (type === "up" && g && inRect(b, x, y)) {
               armedId = armedId === g.id ? 0 : g.id; // toucher un cadeau : le préparer (ou le ranger)
             }
@@ -1476,8 +1533,9 @@ export function createPlayScreen(game) {
           bridgeDrag = null;
           finger = null;
           const idx = armedIndex();
-          if (type === "up" && idx >= 0 && Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y) > cfg.roads.tap_slop_px) {
-            const r = sim.placeBridge(idx, d.a, d.b);
+          const moved = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y) > cfg.roads.tap_slop_px;
+          if (type === "up" && idx >= 0 && (moved || d.kind === "gold")) {
+            const r = d.kind === "gold" ? sim.placeGold(idx, d.a, d.b) : sim.placeBridge(idx, d.a, d.b);
             if (!r.ok && r.reason !== "none") toast(`gift.err.${r.reason}`);
             if (armedIndex() < 0) armedId = 0;
           }
@@ -1486,7 +1544,7 @@ export function createPlayScreen(game) {
         if (giftTap) {
           giftTap = false;
           finger = null;
-          if (type === "up") tryRoundabout(armedIndex(), aim(x, y));
+          if (type === "up") tryJunction(armedIndex(), aim(x, y));
           return;
         }
         const quick = type === "up" && startedAtDown && performance.now() - downAt < cfg.input.tap_max_ms;
